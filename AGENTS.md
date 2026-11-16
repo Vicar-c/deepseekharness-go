@@ -218,6 +218,19 @@
 示例：`fix(tool): run the pwsh tool in PowerShell dialect on Windows`
 要求：一条提交只做一件事；说明"为什么"而非仅"做了什么"；禁止提交密钥、临时文件、`bin/` 产物。
 
+### 提交身份（强制 · D-0003）
+
+- 本仓库**所有**提交的 author 与 committer **必须是用户本人**：`Vicar-c <244100401@qq.com>`。
+- **禁止**使用占位身份、Agent 名称或任何 `@*.local` 邮箱。历史占位身份 `deekseekharness-go <dev@deekseekharness-go.local>` 已废弃，不得再用。
+- 仓库级 `user.name` / `user.email` 已固定为该身份；提交前自查：
+
+  ```powershell
+  git log -1 --format='%an <%ae> | %cn <%ce>'
+  ```
+
+- Agent **不得**用 `git -c user.name=...`、`git commit --author=...`、`GIT_AUTHOR_*` / `GIT_COMMITTER_*` 环境变量把身份临时替换成别人。
+- 身份写错必须立即修正：未推送用 `git commit --amend --reset-author`；已推送按 [D-0003](docs/decisions/D-0003-commit-identity.md) 的回滚方式处理，不得让错误身份继续累积。
+
 ---
 
 ## 8. 对用户的报告格式

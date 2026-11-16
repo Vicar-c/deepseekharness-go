@@ -22,6 +22,8 @@
 | 密钥 | `DEEPSEEK_API_KEY` 已配置于**用户环境变量**（不落盘、不入库）；当前 DSH 会话内需手动设置后才可见 |
 | 数据目录 | `~/.deekseekharness-go/`（config + sessions），与安装版 DSH 的 `~/.dsh/` 隔离 |
 | 网络 | npmmirror / goproxy.cn 已配置；GitHub 直连不稳，必要时用 OpenSSL 后端与代理 |
+| 远端仓库 | `origin` → <https://github.com/Vicar-c/deekseekharness-go>（仓库名与本地目录、`go.mod` 一致，同为 `deekseekharness-go`）；**Git 不读 Windows 系统代理**，已写入仓库级 `http.proxy = http://127.0.0.1:7890`（WinINET 系统代理当前开启） |
+| 提交身份 | `Vicar-c <244100401@qq.com>`（仓库级 `user.name`/`user.email` 固定，规则见 [D-0003](decisions/D-0003-commit-identity.md)） |
 
 ## 已完成
 
@@ -32,6 +34,7 @@
 - 修复：`pwsh` 工具方言、运行上下文注入、数据目录隔离（含清理误入 `~/.dsh/sessions` 的 1 个文件）。
 - 文档：README、ARCHITECTURE、MIGRATION_MAP（578 行）。
 - 协作契约：AGENTS.md、AGENT_WORKFLOW.md、任务/决策记录体系与本快照。
+- 发布：仓库级提交身份固定为 `Vicar-c <244100401@qq.com>`（6 个历史提交已改写为该身份），远端 `origin` 指向 GitHub；记录见 [D-0003](decisions/D-0003-commit-identity.md) 与 [T-0004](tasks/T-0004-github-publication.md)。
 
 ## 进行中
 

@@ -191,6 +191,14 @@ func (r *runtime) newLoop(sess *session.Session) (*agent.Loop, error) {
 	if err != nil {
 		return nil, err
 	}
+	toolNames := make([]string, 0, r.registry.Len())
+	for _, definition := range r.registry.Definitions() {
+		toolNames = append(toolNames, definition.Name)
+	}
+	systemPrompt := agent.DefaultSystemPrompt + fmt.Sprintf(
+		"\n\nRuntime context:\n- model: %s\n- workspace: %s\n- tools: %s",
+		r.cfg.Model, r.cfg.Workspace, strings.Join(toolNames, ", "),
+	)
 	return agent.New(agent.Options{
 		Client:        client,
 		Pipeline:      r.pipeline,
@@ -198,6 +206,7 @@ func (r *runtime) newLoop(sess *session.Session) (*agent.Loop, error) {
 		Store:         r.store,
 		Events:        r.app.Events(),
 		Logger:        r.logger,
+		SystemPrompt:  systemPrompt,
 		MaxIterations: r.cfg.MaxIterations,
 	})
 }

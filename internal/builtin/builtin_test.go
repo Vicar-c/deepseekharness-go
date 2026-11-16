@@ -81,7 +81,16 @@ func TestShellToolRunsCommands(t *testing.T) {
 		name = "pwsh"
 	}
 	shell := mustTool(t, registry, name)
-	result, err := shell.Execute(context.Background(), json.RawMessage(`{"command":"echo harness-shell-ok"}`))
+	command := `echo harness-shell-ok`
+	if runtime.GOOS == "windows" {
+		// PowerShell dialect on purpose: cmd.exe would not understand this.
+		command = `Write-Output "harness-shell-ok"`
+	}
+	payload, err := json.Marshal(map[string]string{"command": command})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := shell.Execute(context.Background(), payload)
 	if err != nil {
 		t.Fatalf("shell: %v", err)
 	}

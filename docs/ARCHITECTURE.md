@@ -188,3 +188,15 @@ CLI 的 `[tool] write ok 0ms` 就是订阅 `tool/executed` 打印的。
 3. **P3**：MCP 客户端、LSP、Skill 目录、Subagent 子会话与 Team 任务板。
 4. **P4**：Web RPC/事件流（SSE）、多会话前端、Desktop 壳与插件市场。
 5. **持续**：对齐上游 session JSONL / 工具 schema，保证跨实现可复现与可迁移。
+
+## 11. 安全边界（当前阶段）
+
+| 能力 | 限制 | 备注 |
+|---|---|---|
+| `read`/`write`/`list_dir` | 工作区路径白名单（拒绝 `..` 与绝对路径逃逸） | 已实现 |
+| `pwsh`/`bash` | 无沙箱，继承宿主用户权限 | 等价上游 `danger-full-access`；P2 引入 read-only/workspace-write 策略 |
+| 网络 | LLM 客户端仅访问配置的 `baseUrl` | 工具命令可发起任意网络请求（同 shell 限制） |
+| 凭据 | API key 只从环境变量读取，不写入会话/仓库 | 会话 JSONL 只含模型消息与工具结果 |
+| 审批 | `tool.Pipeline.AddGuard` 提供否决钩子 | 默认无 guard；P2 接入审批/策略链 |
+
+> 设计取舍：P0/P1 优先跑通闭环，沙箱与审批按迁移计划 P2 再做；在此之前请把 harness 视为与用户同等权限的本地进程。

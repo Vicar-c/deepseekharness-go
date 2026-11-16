@@ -272,9 +272,13 @@ func shellToolName() string {
 }
 
 func (t *shellTool) Definition() tool.Definition {
+	description := "Run a bash command in the workspace and return its combined output and exit code. Use it for builds, tests and repository inspection."
+	if runtime.GOOS == "windows" {
+		description = "Run a PowerShell command in the workspace and return its combined output and exit code. Use it for builds, tests and repository inspection."
+	}
 	return tool.Definition{
 		Name:        shellToolName(),
-		Description: "Run a shell command in the workspace and return its combined output and exit code. Use it for builds, tests and repository inspection.",
+		Description: description,
 		Parameters: schema(map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -305,9 +309,9 @@ func (t *shellTool) Execute(ctx context.Context, arguments json.RawMessage) (too
 	}
 	var command *exec.Cmd
 	if runtime.GOOS == "windows" {
-		command = exec.CommandContext(ctx, "cmd.exe", "/d", "/s", "/c", args.Command)
+		command = exec.CommandContext(ctx, windowsPowerShell(), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", args.Command)
 	} else {
-		command = exec.CommandContext(ctx, "/bin/sh", "-c", args.Command)
+		command = exec.CommandContext(ctx, posixShell(), "-c", args.Command)
 	}
 	command.Dir = t.root
 	command.Env = os.Environ()
@@ -331,6 +335,25 @@ func (t *shellTool) Execute(ctx context.Context, arguments json.RawMessage) (too
 		content = "(no output)"
 	}
 	return tool.Result{Content: content + "\n(exit code 0)"}, nil
+}
+
+// windowsPowerShell returns the best available PowerShell host: pwsh 7+ when
+// installed, otherwise the inbox Windows PowerShell 5.1.
+func windowsPowerShell() string {
+	for _, candidate := range []string{"pwsh.exe", "pwsh", "powershell.exe"} {
+		if path, err := exec.LookPath(candidate); err == nil {
+			return path
+		}
+	}
+	return "powershell.exe"
+}
+
+// posixShell prefers bash, which is what the upstream `bash` tool exposes.
+func posixShell() string {
+	if path, err := exec.LookPath("bash"); err == nil {
+		return path
+	}
+	return "/bin/sh"
 }
 
 type limitedBuffer struct {

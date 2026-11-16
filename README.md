@@ -74,6 +74,13 @@ go vet ./...
 常用环境变量：`DEEPSEEK_API_KEY`、`DSH_MODEL`、`DSH_BASE_URL`、`DSH_WORKSPACE`、`DSH_SESSION_DIR`、`DSH_LOG_LEVEL`、`DSH_MAX_ITERATIONS`。
 `DEEPSEEK_API_KEY` 未设置时 harness 仍可启动，但 `/api/chat` 与 `chat` 会返回明确错误。
 
+## 安全边界（当前阶段）
+
+- `read` / `write` / `list_dir`：路径解析限制在 `--workspace` 内，拒绝 `..` 逃逸。
+- `pwsh` / `bash`：**目前没有沙箱**，命令以当前用户权限访问宿主文件系统（行为等价于上游的 `danger-full-access`）。上游的 `read-only` / `workspace-write` 三模式策略属于 P2 里程碑。
+- 会话与配置不写入 Git；API key 通过环境变量提供，不落盘到仓库。
+- 不建议在持有生产凭据的机器上让模型执行不可信提示词；如需最小权限，可给 `tool.Pipeline` 添加 guard（`AddGuard`）拒绝高风险命令。
+
 ## 目录结构
 
 ```

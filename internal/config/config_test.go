@@ -83,13 +83,31 @@ func TestNormalizeRejectsBlankBaseURL(t *testing.T) {
 }
 
 func TestApplyFlags(t *testing.T) {
+	workspace := t.TempDir()
 	cfg := config.Default()
-	cfg.ApplyFlags("flag-model", "http://localhost:1234", "C:\\work", "debug")
+	cfg.ApplyFlags("flag-model", "http://localhost:1234", workspace, "debug")
 	if cfg.Model != "flag-model" || cfg.BaseURL != "http://localhost:1234" || cfg.LogLevel != "debug" {
 		t.Fatalf("flags not applied: %+v", cfg)
 	}
+	if cfg.Workspace != workspace {
+		t.Fatalf("workspace = %q, want %q", cfg.Workspace, workspace)
+	}
+}
+
+// TestNormalizeResolvesWorkspace keeps the original intent of TestApplyFlags:
+// whatever the CLI passes in, the normalized configuration holds an absolute
+// workspace path on every platform.
+func TestNormalizeResolvesWorkspace(t *testing.T) {
+	cfg := config.Default()
+	cfg.ApplyFlags("", "", "relative-workspace", "")
+	if err := cfg.Normalize(); err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
 	if !filepath.IsAbs(cfg.Workspace) {
 		t.Fatalf("workspace = %q, want absolute path", cfg.Workspace)
+	}
+	if got := filepath.Base(cfg.Workspace); got != "relative-workspace" {
+		t.Fatalf("workspace baseline = %q, want relative-workspace", got)
 	}
 }
 

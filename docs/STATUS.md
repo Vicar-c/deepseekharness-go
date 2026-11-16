@@ -77,7 +77,7 @@
 - `python scripts/check_md_links.py` → 20 个 md、77 条相对链接、0 缺失
 - 残留检查：仓库内无 `C:\Users\ADMIN`，无裸 `deekseekharness-go/internal/` import；旧拼写仅剩历史记录（占位提交身份、迁移说明）
 - `go install github.com/Vicar-c/deepseekharness-go/cmd/dsh@latest` → 成功（3.1s）
-- GitHub Actions `CI`（ubuntu + windows）→ `43d262d` 起全绿
+- GitHub Actions `CI`（ubuntu + windows）→ `43d262d` 起全绿；`7add8f7`（数据目录改名）同样双平台 success
 - 数据目录迁移：旧 `~/.deekseekharness-go` → `~/.deepseekharness-go`，2 个历史会话完整保留；二次运行无提示（幂等）
 - `python scripts/check_md_links.py` → 22 个 md、95 条相对链接、0 缺失
 

@@ -31,7 +31,7 @@
 | 真机首跑 `dsh-migrate.exe config` | stderr 打印 `dsh: migrated data directory to ~/.deepseekharness-go`，`config file:` 指向新路径 |
 | 真机二次运行 | 无迁移提示（幂等） |
 | 迁移后文件系统 | 旧目录已不存在；新目录含 `sessions/`，**2 个历史会话完整保留** |
-| GitHub Actions `CI` | 待本次推送后确认（本地已验证 Linux 可交叉编译） |
+| GitHub Actions `CI` | `7add8f7` 推送后 ubuntu + windows 两个作业均 success |
 
 ## 自动决策
 

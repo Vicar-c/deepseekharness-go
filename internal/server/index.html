@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DeepSeek Harness · Go rewrite</title>
+  <style>
+    :root { color-scheme: light dark; --bg:#ffffff; --fg:#1f2328; --muted:#6b7280; --line:#e5e7eb; --card:#f9fafb; --accent:#2563eb; --user:#eff6ff; --error:#fee2e2; }
+    @media (prefers-color-scheme: dark) { :root { --bg:#151517; --fg:#e6e6e6; --muted:#9ca3af; --line:#2a2a2e; --card:#1d1d21; --accent:#60a5fa; --user:#1e293b; --error:#3b1f1f; } }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.55 ui-sans-serif, system-ui, "Segoe UI", sans-serif; }
+    header { padding:16px 22px; border-bottom:1px solid var(--line); display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+    header h1 { font-size:16px; margin:0; }
+    header .tag { color:var(--muted); font-size:12px; border:1px solid var(--line); border-radius:999px; padding:1px 9px; }
+    header .meta { margin-left:auto; color:var(--muted); font-size:12px; }
+    main { max-width:860px; margin:0 auto; padding:18px 16px 120px; }
+    .log { display:flex; flex-direction:column; gap:12px; }
+    .bubble { padding:12px 14px; border:1px solid var(--line); border-radius:12px; background:var(--card); white-space:pre-wrap; word-break:break-word; }
+    .bubble.user { background:var(--user); }
+    .bubble.error { background:var(--error); }
+    .bubble .role { display:block; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.06em; margin-bottom:6px; }
+    form { position:fixed; left:50%; transform:translateX(-50%); bottom:18px; width:min(860px, calc(100% - 32px)); display:flex; gap:8px; background:var(--bg); padding:10px; border:1px solid var(--line); border-radius:14px; }
+    textarea { flex:1; resize:none; border:0; outline:none; background:transparent; color:inherit; font:inherit; min-height:44px; max-height:180px; }
+    button { border:0; border-radius:10px; padding:0 18px; background:var(--accent); color:#fff; font:inherit; font-weight:600; cursor:pointer; }
+    button:disabled { opacity:.55; cursor:default; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>DeepSeek Harness</h1><span class="tag">Go rewrite</span>
+    <div class="meta" id="meta">loading…</div>
+  </header>
+  <main>
+    <div class="log" id="log">
+      <div class="bubble"><span class="role">harness</span>Go 改写骨架已启动。输入消息开始对话（需要配置 DEEPSEEK_API_KEY）。</div>
+    </div>
+    <form id="composer">
+      <textarea id="input" rows="1" placeholder="Ask the harness…（Enter 发送，Shift+Enter 换行）"></textarea>
+      <button id="send" type="submit">Send</button>
+    </form>
+  </main>
+  <script>
+    const log = document.getElementById('log');
+    const input = document.getElementById('input');
+    const send = document.getElementById('send');
+    let sessionId = '';
+
+    function bubble(role, text, kind) {
+      const node = document.createElement('div');
+      node.className = 'bubble' + (kind ? ' ' + kind : '');
+      const label = document.createElement('span');
+      label.className = 'role';
+      label.textContent = role;
+      node.appendChild(label);
+      node.appendChild(document.createTextNode(text));
+      log.appendChild(node);
+      node.scrollIntoView({ block: 'end' });
+      return node;
+    }
+
+    async function refreshHealth() {
+      try {
+        const response = await fetch('/healthz');
+        const health = await response.json();
+        document.getElementById('meta').textContent =
+          `v${health.version} · ${health.model} · ${health.chatEnabled ? 'model ready' : 'no API key'}`;
+        if (!health.chatEnabled) {
+          bubble('harness', '未配置 DEEPSEEK_API_KEY：聊天接口会返回 503。设置环境变量后重启 `dsh web`。', 'error');
+        }
+      } catch (error) {
+        document.getElementById('meta').textContent = 'offline';
+      }
+    }
+
+    async function submit() {
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+      bubble('you', text, 'user');
+      const pending = bubble('harness', '…');
+      send.disabled = true;
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId, input: text }),
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+        sessionId = payload.sessionId || sessionId;
+        pending.remove();
+        bubble('harness', payload.reply || '(empty reply)');
+      } catch (error) {
+        pending.remove();
+        bubble('harness', String(error.message || error), 'error');
+      } finally {
+        send.disabled = false;
+        input.focus();
+      }
+    }
+
+    document.getElementById('composer').addEventListener('submit', (event) => {
+      event.preventDefault();
+      submit();
+    });
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        submit();
+      }
+    });
+    refreshHealth();
+    input.focus();
+  </script>
+</body>
+</html>

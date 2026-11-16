@@ -61,7 +61,8 @@ func Default() Config {
 }
 
 // FilePath resolves the config file location: $DSH_CONFIG wins, otherwise
-// ~/.dsh/config.json.
+// ~/.deekseekharness-go/config.json. The directory is intentionally separate
+// from the installed DeepSeek Harness desktop app data in ~/.dsh.
 func FilePath() string {
 	if explicit := strings.TrimSpace(os.Getenv("DSH_CONFIG")); explicit != "" {
 		return explicit
@@ -70,7 +71,7 @@ func FilePath() string {
 	if err != nil || home == "" {
 		return "dsh-config.json"
 	}
-	return filepath.Join(home, ".dsh", "config.json")
+	return filepath.Join(home, ".deekseekharness-go", "config.json")
 }
 
 // Load reads the configuration from path (empty means FilePath). A missing file
@@ -215,7 +216,7 @@ func (c *Config) applyEnv() {
 func defaultSessionDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
-		return filepath.Join(".dsh", "sessions")
+		return filepath.Join(".deekseekharness-go", "sessions")
 	}
-	return filepath.Join(home, ".dsh", "sessions")
+	return filepath.Join(home, ".deekseekharness-go", "sessions")
 }

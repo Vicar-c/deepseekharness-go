@@ -49,12 +49,14 @@ go vet ./...
 | `internal/agent` | Agent loop：模型调用 → 工具执行 → 结果回填 → 循环直到最终回答；事件 `agent/started` / `agent/step` / `agent/finished`；迭代上限保护 |
 | `internal/session` | 会话模型 + 追加式 JSONL 持久化（meta 行 + message 行），`Load`/`List`，id 白名单防路径穿越 |
 | `internal/server` | 最小 Web 服务：内嵌 UI、`/healthz`、`/api/sessions*`、`/api/chat`、panic 恢复 |
-| `internal/config` | `~/.dsh/config.json` + `DSH_*` 环境变量覆盖、`dsh config init` 生成默认配置 |
+| `internal/config` | `~/.deekseekharness-go/config.json` + `DSH_*` 环境变量覆盖、`dsh config init` 生成默认配置 |
 | `cmd/dsh` | CLI：`version` / `web` / `chat` / `tools` / `config`，优雅退出 |
 
 ## 配置
 
-默认配置路径：`$DSH_CONFIG` 或 `~/.dsh/config.json`（文件不存在时使用默认值）。
+默认配置路径：`$DSH_CONFIG` 或 `~/.deekseekharness-go/config.json`（文件不存在时使用默认值）。
+
+> Go 实现的数据目录（`~/.deekseekharness-go/`）与已安装的 DSH 桌面应用（`~/.dsh/`）隔离，避免两套会话/配置格式互相干扰。
 
 ```json
 {
@@ -62,7 +64,7 @@ go vet ./...
   "baseUrl": "https://api.deepseek.com",
   "apiKeyEnv": "DEEPSEEK_API_KEY",
   "workspace": "C:\\path\\to\\workspace",
-  "sessionDir": "C:\\Users\\<you>\\.dsh\\sessions",
+  "sessionDir": "C:\\Users\\<you>\\.deekseekharness-go\\sessions",
   "maxIterations": 12,
   "requestTimeoutSec": 120,
   "toolTimeoutSec": 60,

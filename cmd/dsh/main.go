@@ -39,7 +39,7 @@ Usage:
   dsh help                        Show this help
 
 Common flags:
-  --config <path>       Config file (default $DSH_CONFIG or ~/.dsh/config.json)
+  --config <path>       Config file (default $DSH_CONFIG or ~/.deepseekharness-go/config.json)
   --model <name>        Model name (default deepseek-chat)
   --base-url <url>      OpenAI-compatible base URL (default https://api.deepseek.com)
   --workspace <dir>     Workspace directory (default current directory)
@@ -95,7 +95,14 @@ func addCommonFlags(fs *flag.FlagSet) *commonFlags {
 	return flags
 }
 
-func (flags *commonFlags) load() (config.Config, *slog.Logger, error) {
+func (flags *commonFlags) load(stderr io.Writer) (config.Config, *slog.Logger, error) {
+	migrated, err := config.MigrateLegacyDataDir()
+	if err != nil {
+		return config.Config{}, nil, err
+	}
+	if migrated {
+		fmt.Fprintf(stderr, "dsh: migrated data directory to ~/%s\n", config.DataDirName)
+	}
 	cfg, err := config.Load(flags.configPath)
 	if err != nil {
 		return config.Config{}, nil, err
@@ -220,7 +227,7 @@ func runWeb(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	cfg, logger, err := flags.load()
+	cfg, logger, err := flags.load(stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "dsh: %v\n", err)
 		return 1
@@ -272,7 +279,7 @@ func runChat(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	cfg, logger, err := flags.load()
+	cfg, logger, err := flags.load(stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "dsh: %v\n", err)
 		return 1
@@ -365,7 +372,7 @@ func runTools(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	cfg, logger, err := flags.load()
+	cfg, logger, err := flags.load(stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "dsh: %v\n", err)
 		return 1
@@ -410,7 +417,7 @@ func runConfig(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "wrote %s\n", path)
 		return 0
 	}
-	cfg, _, err := flags.load()
+	cfg, _, err := flags.load(stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "dsh: %v\n", err)
 		return 1

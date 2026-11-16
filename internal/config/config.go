@@ -19,6 +19,13 @@ const (
 	DefaultBaseURL = "https://api.deepseek.com"
 	// DefaultAPIKeyEnv is the environment variable holding the API key.
 	DefaultAPIKeyEnv = "DEEPSEEK_API_KEY"
+	// DataDirName is the directory under the user's home that holds the config
+	// file and the sessions. It is kept out of ~/.dsh so the Go rewrite never
+	// touches the installed desktop app's data.
+	DataDirName = ".deepseekharness-go"
+	// legacyDataDirName is the data directory used before the project was
+	// renamed. It is migrated once at startup, see MigrateLegacyDataDir.
+	legacyDataDirName = ".deekseekharness-go"
 )
 
 // Config is the persisted harness configuration. Field names map 1:1 to the
@@ -61,7 +68,7 @@ func Default() Config {
 }
 
 // FilePath resolves the config file location: $DSH_CONFIG wins, otherwise
-// ~/.deekseekharness-go/config.json. The directory is intentionally separate
+// ~/.deepseekharness-go/config.json. The directory is intentionally separate
 // from the installed DeepSeek Harness desktop app data in ~/.dsh.
 func FilePath() string {
 	if explicit := strings.TrimSpace(os.Getenv("DSH_CONFIG")); explicit != "" {
@@ -71,7 +78,7 @@ func FilePath() string {
 	if err != nil || home == "" {
 		return "dsh-config.json"
 	}
-	return filepath.Join(home, ".deekseekharness-go", "config.json")
+	return filepath.Join(home, DataDirName, "config.json")
 }
 
 // Load reads the configuration from path (empty means FilePath). A missing file
@@ -216,7 +223,42 @@ func (c *Config) applyEnv() {
 func defaultSessionDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
-		return filepath.Join(".deekseekharness-go", "sessions")
+		return filepath.Join(DataDirName, "sessions")
 	}
-	return filepath.Join(home, ".deekseekharness-go", "sessions")
+	return filepath.Join(home, DataDirName, "sessions")
+}
+
+// MigrateLegacyDataDir renames the data directory used before the project was
+// renamed (~/.deekseekharness-go) to the current one (~/.deepseekharness-go).
+//
+// It reports whether a migration happened. The rename only runs when the legacy
+// directory exists and the current one does not, so existing data is never
+// overwritten and the call is a no-op on fresh installs and on every run after
+// the first migration.
+func MigrateLegacyDataDir() (bool, error) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return false, nil
+	}
+	return migrateDataDir(filepath.Join(home, legacyDataDirName), filepath.Join(home, DataDirName))
+}
+
+// migrateDataDir is the testable core of MigrateLegacyDataDir.
+func migrateDataDir(legacy, current string) (bool, error) {
+	if _, err := os.Stat(legacy); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("config: inspect %s: %w", legacy, err)
+	}
+	if _, err := os.Stat(current); err == nil {
+		// Already migrated, or the user already has data in the new location.
+		return false, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, fmt.Errorf("config: inspect %s: %w", current, err)
+	}
+	if err := os.Rename(legacy, current); err != nil {
+		return false, fmt.Errorf("config: migrate %s to %s: %w", legacy, current, err)
+	}
+	return true, nil
 }

@@ -116,11 +116,11 @@ func TestDefaultDataDirectoryIsSeparatedFromUpstream(t *testing.T) {
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("HOME", home)
 	t.Setenv("DSH_CONFIG", "")
-	if got, want := config.FilePath(), filepath.Join(home, ".deekseekharness-go", "config.json"); got != want {
+	if got, want := config.FilePath(), filepath.Join(home, ".deepseekharness-go", "config.json"); got != want {
 		t.Fatalf("FilePath = %q, want %q", got, want)
 	}
 	cfg := config.Default()
-	if want := filepath.Join(home, ".deekseekharness-go", "sessions"); cfg.SessionDir != want {
+	if want := filepath.Join(home, ".deepseekharness-go", "sessions"); cfg.SessionDir != want {
 		t.Fatalf("SessionDir = %q, want %q", cfg.SessionDir, want)
 	}
 }

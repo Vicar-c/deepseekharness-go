@@ -5,10 +5,12 @@
 
 ## 当前阶段
 
-**P0 骨架完成 + 真实 API 验证通过；P1（单 agent 可用闭环）尚未启动。**
+**P0 骨架完成 + 真实 API 验证通过；P1 尚未启动（决策门禁中）。**
 
 项目：DeepSeek Harness（DSH）的 Go 重写实现，运行入口 `cmd/dsh`。
 参考源码：`C:\Users\ADMIN\Desktop\deepseekharness`（上游 TS 实现，只读）。
+
+> **实施门禁（D-0002）生效**：决策队列未清空、且用户未明确说"实现"之前，不进行任何功能实施。
 
 ## 环境事实
 
@@ -33,25 +35,19 @@
 
 ## 进行中
 
-- 无（T-0002 文档体系随本次会话收尾）。
+- 无（等待用户逐项决策 Q-0001…Q-0005；收到明确"实现"指令后才启动 P1）。
 
-## 下一步候选（按优先级）
+## 决策队列（与会话内表格同源）
 
-1. **P1**：turn/step 事件模型 + `request/header` 可重建 + DSH v4 会话 JSONL（对齐上游 `session-format-status` / `persistence-catalog`）。
-2. **P1**：流式 LLM（`llm.Stream`）+ Web SSE `/api/chat` + 会话读取接口。
-3. **P1**：工具补齐 `edit` / `apply_patch` / `glob` / `grep` / `todo_write` / `working_directory`。
-4. **P2**：沙箱三模式（read-only / workspace-write / danger-full-access）+ 审批 guard。
-5. **P2**：`fs` / `shell` 服务 seam 重构（为沙箱与多 provider 做准备）。
+> 规则（D-0002）：逐项决策；未决项存在时不实施；只有用户明确说"实现"才进入实施。
 
-## 待用户决策
-
-| 问题 | 选项 | 建议 |
-|---|---|---|
-| P1 先做哪条主线？ | 会话格式 v4 / 流式 SSE / 工具补齐 | 会话格式 v4 优先（数据是根，越晚改迁移成本越高） |
-| 是否引入第三方 Go 依赖？ | 纯标准库 / 允许 zstd+sqlite+websocket 等 | 按需引入，每项单独立项（需决策） |
-| 是否规范化行尾（`.gitattributes`）？ | 保持现状 / `* text=auto eol=lf` | 建议加，减少 Windows 下 CRLF 噪音 |
-| 是否与上游 TS 实现做 session 互操作验证？ | 暂不做 / P1 一起做 | 建议 P1 一起做，作为迁移正确性验收 |
-| 是否确认 D-0001-06…14 的代理推导基调？ | 全部接受 / 部分修订 / 否决 | 默认生效；可直接在 D-0001 上追加修订 |
+| ID | 待决问题 | 选项 | 建议 | 状态 |
+|---|---|---|---|---|
+| Q-0001 | P1 先做哪条主线？ | A. 会话格式 v4 / B. 流式 SSE / C. 工具补齐 | A | 待决策 |
+| Q-0002 | 是否引入第三方 Go 依赖？ | A. 暂不引入（P1 全标准库）/ B. 允许 zstd、sqlite、websocket 等按需引入 | A | 待决策 |
+| Q-0003 | 是否规范化行尾？ | A. 保持现状 / B. 增加 `.gitattributes`（`* text=auto eol=lf`） | B | 待决策 |
+| Q-0004 | 是否与上游 TS 实现做 session 互操作验证？ | A. 暂不做 / B. P1 一起做 | B | 待决策 |
+| Q-0005 | 是否确认 D-0001-06…14 的代理推导基调？ | A. 全部接受 / B. 部分修订（指出条目）/ C. 否决 | A | 待决策 |
 
 ## 最近验证（2026-11-16）
 

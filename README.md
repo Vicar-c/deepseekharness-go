@@ -112,7 +112,7 @@ scripts/build.ps1        Windows 构建脚本
 
 | 文件/目录 | 作用 |
 |---|---|
-| [AGENTS.md](AGENTS.md) | 最高协作契约：决策/实现落盘、用户决策留痕、多 Agent 编排、重构与范围纪律 |
+| [AGENTS.md](AGENTS.md) | 最高协作契约：决策/实现落盘、用户决策留痕、多 Agent 编排、重构与范围纪律、会话内决策表格与实施门禁 |
 | [docs/STATUS.md](docs/STATUS.md) | 项目当前状态快照（新会话先读这里） |
 | [docs/AGENT_WORKFLOW.md](docs/AGENT_WORKFLOW.md) | 任务生命周期、记录模板、多 Agent 拆分与验收 |
 | [docs/tasks/](docs/tasks/) | 任务实现记录（目标/范围/验证/遗留，一个任务一个文件） |

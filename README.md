@@ -130,6 +130,7 @@ scripts/build.ps1        Windows 构建脚本
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)：分层、插件生命周期、一次对话的完整时序、工具流水线、JSONL 格式、HTTP API、扩展方式、与上游 Cordis 的差距
 - [docs/MIGRATION_MAP.md](docs/MIGRATION_MAP.md)：上游 53 个模块组 → Go 包映射、迁移优先级（P0–P4）、数据/协议兼容性与风险
+- [docs/PLAN_P1.md](docs/PLAN_P1.md)：P1 开工前的决策辅助材料（三条主线改动面与风险、依赖与行尾策略、上游互操作方案）
 
 ## 与上游的差距（路线图摘要）
 

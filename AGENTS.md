@@ -1,4 +1,4 @@
-# AGENTS.md — deekseekharness-go 协作契约
+# AGENTS.md — deepseekharness-go 协作契约
 
 > 本文件是本仓库**最高优先级的协作约定**，面向所有 AI Agent（含多 Agent 场景）与人类协作者。
 > 开始任何工作前，依次阅读：**AGENTS.md → docs/STATUS.md → 相关 docs/tasks/ 与 docs/decisions/ 记录**。
@@ -10,7 +10,7 @@
 ## 0. 项目速览
 
 - **项目**：DeepSeek Harness（DSH）的 Go 重写实现，独立仓库。
-- **参考源码**：`C:\Users\ADMIN\Desktop\deepseekharness`（上游 TS 实现，**只读**，不得修改）。
+- **参考源码**：`%USERPROFILE%\Desktop\deepseekharness`（上游 TS 实现，**只读**，不得修改）。
 - **技术栈**：Go 1.27+，优先标准库，Windows 优先并保持跨平台可编译。
 - **入口**：`cmd/dsh`；当前阶段 P0 骨架已完成，真实 DeepSeek API 已验证。
 - **数据目录**：`~/.deekseekharness-go/`（与安装版 DSH 的 `~/.dsh/` 严格隔离）。
@@ -192,7 +192,7 @@
 - [ ] 行为符合任务验收标准
 - [ ] `gofmt -l .` 无输出
 - [ ] `go vet ./...` 通过
-- [ ] `staticcheck ./...` 无告警（工具在 `C:\Users\ADMIN\go\bin`）
+- [ ] `staticcheck ./...` 无告警（工具在 `%USERPROFILE%\go\bin`）
 - [ ] `go test ./...` 全绿；新增逻辑有对应测试
 - [ ] `scripts/build.ps1` 构建通过
 - [ ] 涉及模型/网络/文件系统的改动做过真实端到端验证
@@ -273,7 +273,7 @@ staticcheck -version
 # 本仓库
 go test ./...                          # 全量测试
 go vet ./...                           # 静态检查
-& "C:\Users\ADMIN\go\bin\staticcheck.exe" ./...
+& "$env:USERPROFILE\go\bin\staticcheck.exe" ./...
 .\scripts\build.ps1                    # 构建 bin\dsh.exe（注入版本/commit）
 .\bin\dsh.exe tools                    # 查看已注册工具
 
@@ -283,7 +283,7 @@ $env:DEEPSEEK_API_KEY = $env:DEEPSEEK_API_KEY   # 新终端自动已有；当前
 .\bin\dsh.exe web --port 3080
 ```
 
-参考源码（只读）：`C:\Users\ADMIN\Desktop\deepseekharness`（pnpm/Node 已安装，可用于对照运行）。
+参考源码（只读）：`%USERPROFILE%\Desktop\deepseekharness`（pnpm/Node 已安装，可用于对照运行）。
 
 ---
 

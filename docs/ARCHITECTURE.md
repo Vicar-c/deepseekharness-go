@@ -1,6 +1,6 @@
 # Go 改写架构说明
 
-本文描述 `deekseekharness-go` 当前骨架的实现结构与设计取舍。目标是渐进式重建上游
+本文描述 `deepseekharness-go` 当前骨架的实现结构与设计取舍。目标是渐进式重建上游
 DeepSeek Harness（TS/Cordis）的能力，而不是一次性移植。
 
 ## 1. 设计原则

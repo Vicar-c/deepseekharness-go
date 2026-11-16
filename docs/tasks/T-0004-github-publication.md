@@ -6,7 +6,7 @@
 
 ## 目标
 
-把本仓库发布到 <https://github.com/Vicar-c/deekseekharness-go>，并且：
+把本仓库发布到 <https://github.com/Vicar-c/deepseekharness-go>，并且：
 
 1. 发布前确认仓库可构建、测试全绿、无密钥/隐私泄漏；
 2. 所有提交的作者与提交者归属用户本人（`Vicar-c <244100401@qq.com>`）。
@@ -46,7 +46,9 @@
 
 ## 遗留与下一步
 
-- **模块路径缺 host 前缀**：`go.mod` 声明 `module deekseekharness-go`（无域名前缀），而远端路径是 `github.com/Vicar-c/deekseekharness-go`，因此 `go install github.com/Vicar-c/deekseekharness-go/cmd/dsh@latest` 会报 "module declares its path as: deekseekharness-go but was required as: github.com/Vicar-c/deekseekharness-go"。待用户在「改 `go.mod` 与 9 处 import 加 `github.com/Vicar-c/` 前缀 / 只当源码仓库（README 只写 clone 后本地构建）」中决策。
-- **文档中的本机绝对路径**：`AGENTS.md`、`docs/STATUS.md`、`docs/MIGRATION_MAP.md` 含 `C:\Users\ADMIN\...`，公开仓库下属于信息噪音，待决策是否替换为占位符。
-- **无 CI**：仓库没有 `.github/`，建议补一个 `go test` + `go vet` 的最小工作流。
-- **`go` 未进用户 PATH**：位于 `C:\Users\ADMIN\AppData\Local\go\bin`，新终端需手动加入才能直接 `go run`。
+> 2026-11-16 更新：前三条已在 [T-0005](T-0005-rename-and-hardening.md) 中处理完毕，结论如下。
+
+- **模块路径缺 host 前缀** → 已解决：仓库改名为 `deepseekharness-go`，`go.mod` 改为 `module github.com/Vicar-c/deepseekharness-go`，15 个 Go 文件的 import 同步更新。
+- **文档中的本机绝对路径** → 已解决：`AGENTS.md`、`docs/STATUS.md`、`docs/MIGRATION_MAP.md` 等处的 `C:\Users\ADMIN\...` 已替换为 `%USERPROFILE%` / `%LOCALAPPDATA%` 可移植写法。
+- **无 CI** → 已解决：新增 `.github/workflows/ci.yml`（ubuntu / windows 双平台，`gofmt` + `go vet` + `go test` + `go build`）。
+- **`go` 未进用户 PATH**：位于 `%LOCALAPPDATA%\go\bin`，新终端需手动加入才能直接 `go run`（未变）。

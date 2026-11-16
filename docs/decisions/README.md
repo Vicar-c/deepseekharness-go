@@ -20,3 +20,4 @@ Agent 的自主实现决策不在此登记，写入对应任务记录的「自�
 | [D-0001](D-0001-project-baseline.md) | 项目总体基调与协作原则（用户决策 + 代理推导基调） | 生效（代理部分待用户确认） | 2026-11-16 | [T-0002](../tasks/T-0002-agent-guidelines.md) |
 | [D-0002](D-0002-decision-gate.md) | 会话内决策表格与实施门禁 | 生效 | 2026-11-16 | [T-0003](../tasks/T-0003-decision-gate.md) |
 | [D-0003](D-0003-commit-identity.md) | 所有提交的作者与提交者固定为用户本人 | 生效 | 2026-11-16 | —（发布到 GitHub 时的用户指示） |
+| [D-0004](D-0004-rename-and-hardening.md) | 仓库改名 deepseekharness-go，模块路径补 host 前缀，文档去绝对路径，补 CI | 生效 | 2026-11-16 | [T-0005](../tasks/T-0005-rename-and-hardening.md) |

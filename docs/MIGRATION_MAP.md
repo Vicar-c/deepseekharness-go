@@ -1,7 +1,7 @@
 # DSH → Go 迁移映射
 
-> 参考仓库（只读）：`C:\Users\ADMIN\Desktop\deepseekharness`，`master`，`git describe dsh-v0.2.2-rc.3-608-g39163dd30f`，HEAD `39163dd30f703a79079e2d2446545cff3c453738`（2026-11-13），`git rev-list --count HEAD` = 27,219。
-> 目标仓库：`C:\Users\ADMIN\Desktop\deekseekharness-go`（Go 1.27.x，module `deekseekharness-go`）。
+> 参考仓库（只读）：`%USERPROFILE%\Desktop\deepseekharness`，`master`，`git describe dsh-v0.2.2-rc.3-608-g39163dd30f`，HEAD `39163dd30f703a79079e2d2446545cff3c453738`（2026-11-13），`git rev-list --count HEAD` = 27,219。
+> 目标仓库：`%USERPROFILE%\Desktop\deepseekharness-go`（Go 1.27.x，module `github.com/Vicar-c/deepseekharness-go`）。
 > 本文所有结论均来自实际阅读的上述文件；引用一律使用参考仓库内的相对路径。
 > 写作时落盘核对（交付前复核）：P0 骨架已全部落盘——`cmd/dsh` 与 `internal/{version,config,kernel,llm,tool,builtin,session,agent,server}` 均有实现与测试。当前实现是**迁移起点而非目标态**：会话是两行型简化 JSONL（`meta`/`message`）、LLM 仅非流式、事件总线仅同步 emit、Web 仅 `/healthz`+`/api/sessions`+`/api/chat`。本文其余章节按 DSH 的目标契约描述，并在 §5 标明每阶段必须补齐的差距。
 
@@ -56,7 +56,7 @@
 ### 2.1 包结构
 
 ```text
-deekseekharness-go/
+deepseekharness-go/
 ├── cmd/dsh/                 CLI 入口：version / web / chat / session 子命令
 ├── internal/
 │   ├── version/             构建身份（-ldflags 注入）

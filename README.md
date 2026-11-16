@@ -1,4 +1,4 @@
-# deekseekharness-go
+# deepseekharness-go
 
 DeepSeek Harness（DSH）的 **Go 重写实现**（进行中）。
 
@@ -7,11 +7,19 @@ DeepSeek Harness（DSH）的 **Go 重写实现**（进行中）。
 - 目标：在保留 DSH 核心概念（一切皆插件、工具流水线、会话持久化、agent loop）的前提下，用 Go 重建一个可运行、可扩展、跨平台的实现
 - 当前状态：**可运行骨架**已打通全链路（CLI / Web / agent loop / 工具执行 / JSONL 会话），单元测试全绿
 
-> 目录名 `deekseekharness-go` 按需求原样保留。
+> 仓库名与 Go 模块路径均为 `deepseekharness-go`；运行时数据目录仍沿用旧名 `~/.deekseekharness-go/`（改名涉及数据迁移，见 [docs/STATUS.md](docs/STATUS.md) 决策队列 Q-0009）。
 
 ## 快速开始
 
 要求：Go 1.27+（开发时使用 go1.27.4），无需其它依赖（标准库实现）。
+
+从远程安装：
+
+```powershell
+go install github.com/Vicar-c/deepseekharness-go/cmd/dsh@latest
+```
+
+从源码运行：
 
 ```powershell
 # 查看命令

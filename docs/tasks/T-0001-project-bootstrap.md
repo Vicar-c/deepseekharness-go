@@ -22,7 +22,7 @@
 |---|---|
 | 新增 | `cmd/dsh/`、`internal/{kernel,llm,tool,builtin,session,agent,server,config,version}/`、`scripts/build.ps1`、`Makefile`、`README.md`、`docs/{ARCHITECTURE,MIGRATION_MAP}.md` |
 | 修改 | — |
-| 只读参考 | `C:\Users\ADMIN\Desktop\deepseekharness`（上游源码与文档） |
+| 只读参考 | `%USERPROFILE%\Desktop\deepseekharness`（上游源码与文档） |
 
 ## 验收标准（可执行）
 

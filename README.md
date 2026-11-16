@@ -86,6 +86,7 @@ go vet ./...
 ## 目录结构
 
 ```
+AGENTS.md                协作契约（最高优先级，Agent/协作者必读）
 cmd/dsh/                 CLI 入口（version/web/chat/tools/config）
 internal/kernel/         插件内核：生命周期 + 服务容器 + 事件总线
 internal/llm/            LLM 契约与 DeepSeek 客户端
@@ -96,10 +97,26 @@ internal/session/        会话模型与 JSONL 持久化
 internal/server/         HTTP API + 内嵌 Web UI
 internal/config/         配置加载与保存
 internal/version/        版本/commit 注入
+docs/STATUS.md           项目状态快照（跨会话第一入口）
+docs/AGENT_WORKFLOW.md   任务/决策/多 Agent 工作流与模板
+docs/tasks/              任务实现记录（T-XXXX，一个任务一个文件）
+docs/decisions/          用户决策记录（D-XXXX，按任务维度，只追加）
 docs/ARCHITECTURE.md     Go 架构设计说明（中文）
 docs/MIGRATION_MAP.md    上游 TS 模块 → Go 包映射与迁移阶段（中文）
 scripts/build.ps1        Windows 构建脚本
 ```
+
+## 协作契约与记录体系
+
+本仓库是长期跨会话项目，AI Agent 与人类协作必须遵守 [AGENTS.md](AGENTS.md)。核心约定：
+
+| 文件/目录 | 作用 |
+|---|---|
+| [AGENTS.md](AGENTS.md) | 最高协作契约：决策/实现落盘、用户决策留痕、多 Agent 编排、重构与范围纪律 |
+| [docs/STATUS.md](docs/STATUS.md) | 项目当前状态快照（新会话先读这里） |
+| [docs/AGENT_WORKFLOW.md](docs/AGENT_WORKFLOW.md) | 任务生命周期、记录模板、多 Agent 拆分与验收 |
+| [docs/tasks/](docs/tasks/) | 任务实现记录（目标/范围/验证/遗留，一个任务一个文件） |
+| [docs/decisions/](docs/decisions/) | 用户决策记录（按任务维度，只追加不覆盖） |
 
 ## 设计文档
 

@@ -93,6 +93,20 @@ func TestApplyFlags(t *testing.T) {
 	}
 }
 
+func TestDefaultDataDirectoryIsSeparatedFromUpstream(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("HOME", home)
+	t.Setenv("DSH_CONFIG", "")
+	if got, want := config.FilePath(), filepath.Join(home, ".deekseekharness-go", "config.json"); got != want {
+		t.Fatalf("FilePath = %q, want %q", got, want)
+	}
+	cfg := config.Default()
+	if want := filepath.Join(home, ".deekseekharness-go", "sessions"); cfg.SessionDir != want {
+		t.Fatalf("SessionDir = %q, want %q", cfg.SessionDir, want)
+	}
+}
+
 func TestFilePathHonoursDSHConfig(t *testing.T) {
 	explicit := filepath.Join(t.TempDir(), "custom.json")
 	t.Setenv("DSH_CONFIG", explicit)

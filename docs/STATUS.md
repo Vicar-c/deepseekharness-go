@@ -51,6 +51,9 @@
 | Q-0003 | 是否规范化行尾？ | A. 保持现状 / B. 增加 `.gitattributes`（`* text=auto eol=lf`） | B | 待决策 |
 | Q-0004 | 是否与上游 TS 实现做 session 互操作验证？ | A. 暂不做 / B. P1 一起做 | B | 待决策 |
 | Q-0005 | 是否确认 D-0001-06…14 的代理推导基调？ | A. 全部接受 / B. 部分修订（指出条目）/ C. 否决 | A | 待决策 |
+| Q-0006 | 是否给模块路径补 host 前缀？`go.mod` 现为 `module deekseekharness-go`，与远端 `github.com/Vicar-c/deekseekharness-go` 不一致，`go install` 会失败 | A. 改为 `github.com/Vicar-c/deekseekharness-go` + 同步 9 处 import / B. 保持现状，README 只写 clone 后本地构建 | A | 待决策 |
+| Q-0007 | 公开仓库中文档里的本机绝对路径（`C:\Users\ADMIN\...`）是否替换为占位符？ | A. 全部替换为 `<repo>` / `<home>` 之类占位 / B. 保持现状 | A | 待决策 |
+| Q-0008 | 是否补最小 CI（`.github/workflows/ci.yml`：`go test` + `go vet`）？ | A. 补 / B. 暂不补 | A | 待决策 |
 
 ## 最近验证（2026-11-16）
 

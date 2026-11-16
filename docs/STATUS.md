@@ -75,6 +75,8 @@
 - `GOOS=linux go build ./...` → exit 0（CI ubuntu 作业的前提）
 - `python scripts/check_md_links.py` → 20 个 md、77 条相对链接、0 缺失
 - 残留检查：仓库内无 `C:\Users\ADMIN`，无裸 `deekseekharness-go/internal/` import；仅数据目录名与历史占位身份保留旧拼写
+- `go install github.com/Vicar-c/deepseekharness-go/cmd/dsh@latest` → 成功（3.1s）
+- GitHub Actions `CI`（ubuntu + windows）→ `43d262d` 起全绿
 
 ## 相关入口
 

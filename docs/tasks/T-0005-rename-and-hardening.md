@@ -35,9 +35,11 @@
 | `go test ./... -count=1` | 8 个包全部 ok（新模块路径） |
 | `go build ./cmd/dsh` | exit 0，`dsh version` → `deepseekharness-go 0.1.0-dev` |
 | `GOOS=linux go build ./...` | exit 0（Linux 可交叉编译，CI 的 ubuntu 作业前提） |
-| `python scripts/check_md_links.py` | 20 个 md、68 条相对链接、0 缺失 |
+| `python scripts/check_md_links.py` | 20 个 md、77 条相对链接、0 缺失 |
 | 残留检查 | 仓库内已无 `C:\Users\ADMIN`，无裸 `"deekseekharness-go/internal/` import |
 | GitHub | 仓库 `Vicar-c/deepseekharness-go`，`main` 推送成功 |
+| GitHub Actions `CI` | 首跑 ubuntu 失败（`TestApplyFlags` 用了 Windows 绝对路径）→ 修复后 `43d262d` **ubuntu + windows 全绿** |
+| `go install github.com/Vicar-c/deepseekharness-go/cmd/dsh@latest` | 成功（3.1s），安装到 `%USERPROFILE%\go\bin\dsh.exe`，`dsh version` → `deepseekharness-go 0.1.0-dev` |
 
 ## 自动决策
 
@@ -45,13 +47,19 @@
 - **用脚本批量替换 import 并校验次数**：48 处 import 手改易漏；脚本对每一对 `(文件, 原文, 期望次数)` 断言，次数不符即中止。
 - **数据目录不同步改名**：属于用户数据与用户可见路径变更，按 D-0002 单独登记 Q-0009，不在本任务内实施。
 - **CI 双平台**：`builtin` 的 shell 工具按 `runtime.GOOS` 分派，测试里有 GOOS 分支，双平台可真实覆盖；Linux 作业额外做 `gofmt` 检查。
+- **修 CI 首跑暴露的测试缺陷**：`TestApplyFlags` 直接把 `C:\work` 当绝对路径断言 `filepath.IsAbs`，在 Linux 上必然失败；这不是产品缺陷（`ApplyFlags` 只做赋值，绝对化在 `Normalize`）。改为 `t.TempDir()` 断言赋值语义，并新增 `TestNormalizeResolvesWorkspace` 保留"归一化后必须是绝对路径"的原意。
 
 ## 遗留与下一步
 
 - **Q-0009 待决策**：数据目录是否改名 `~/.deepseekharness-go/`（建议改名 + 一次性迁移）。
-- **CI 首跑未观察**：本地只验证了交叉编译，Actions 实跑结果需在推送后确认（首次运行若因 `setup-go` 取不到 1.27.4 会失败，可改为 `1.27.x`）。
-- **`go install ...@latest` 未实测**：需要一次成功拉取（本机到 goproxy 的调用在实施时超时），建议网络正常时执行一次确认。
+- **CI 已绿**：`43d262d` 起 ubuntu 与 windows 两个作业均通过（此前 ubuntu 因 `TestApplyFlags` 平台相关断言失败，已修复）。
 
 ## 附：仓库外的本地操作
 
-- 本地工作目录由 `C:\Users\ADMIN\Desktop\deekseekharness-go` 改名为 `C:\Users\ADMIN\Desktop\deepseekharness-go`，与仓库名一致；该操作不属于仓库内容，不产生提交。
+- 尝试把本地目录 `%USERPROFILE%\Desktop\deekseekharness-go` 改名为 `deepseekharness-go`，与仓库名一致，但**未成功**：目录被语言服务器 `gopls.exe` 占用，`Rename-Item` 报「另一个进程正在使用此文件」。关闭打开该目录的编辑器后可自行执行：
+
+  ```powershell
+  Rename-Item "$env:USERPROFILE\Desktop\deekseekharness-go" "deepseekharness-go"
+  ```
+
+- 该操作与仓库内容无关，不影响任何提交、构建或 CI 结果。

@@ -56,10 +56,5 @@
 
 ## 附：仓库外的本地操作
 
-- 尝试把本地目录 `%USERPROFILE%\Desktop\deekseekharness-go` 改名为 `deepseekharness-go`，与仓库名一致，但**未成功**：目录被语言服务器 `gopls.exe` 占用，`Rename-Item` 报「另一个进程正在使用此文件」。关闭打开该目录的编辑器后可自行执行：
-
-  ```powershell
-  Rename-Item "$env:USERPROFILE\Desktop\deekseekharness-go" "deepseekharness-go"
-  ```
-
+- 本地目录已由 `%USERPROFILE%\Desktop\deekseekharness-go` 改名为 `%USERPROFILE%\Desktop\deepseekharness-go`，与仓库名一致。首次尝试被语言服务器 `gopls.exe` 占用（`Rename-Item` 报「另一个进程正在使用此文件」），编辑器释放句柄后重试成功；改名后 `git status` / `go test` 均正常。
 - 该操作与仓库内容无关，不影响任何提交、构建或 CI 结果。

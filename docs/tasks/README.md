@@ -19,6 +19,7 @@
 | [T-0003](T-0003-decision-gate.md) | 决策门禁与会话内决策表格落地 | done | 2026-11-16 | D-0002 |
 | [T-0004](T-0004-github-publication.md) | 发布到 GitHub 并固定提交身份 | done | 2026-11-16 | D-0003 |
 | [T-0005](T-0005-rename-and-hardening.md) | 仓库改名 deepseekharness-go、模块路径与文档/CI 加固 | done | 2026-11-16 | D-0004 |
+| [T-0006](T-0006-data-directory-rename.md) | 数据目录改名为 ~/.deepseekharness-go 并迁移 | done | 2026-11-16 | D-0005 |
 
 ## 新建任务步骤
 

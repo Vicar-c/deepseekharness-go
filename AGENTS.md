@@ -13,7 +13,7 @@
 - **参考源码**：`%USERPROFILE%\Desktop\deepseekharness`（上游 TS 实现，**只读**，不得修改）。
 - **技术栈**：Go 1.27+，优先标准库，Windows 优先并保持跨平台可编译。
 - **入口**：`cmd/dsh`；当前阶段 P0 骨架已完成，真实 DeepSeek API 已验证。
-- **数据目录**：`~/.deekseekharness-go/`（与安装版 DSH 的 `~/.dsh/` 严格隔离）。
+- **数据目录**：`~/.deepseekharness-go/`（与安装版 DSH 的 `~/.dsh/` 严格隔离；旧目录 `~/.deekseekharness-go/` 首次启动自动迁移，见 D-0005）。
 - **密钥**：只从环境变量 `DEEPSEEK_API_KEY` 读取，**禁止**写入任何文件、日志、文档或 commit。
 
 ---

@@ -7,7 +7,7 @@ DeepSeek Harness（DSH）的 **Go 重写实现**（进行中）。
 - 目标：在保留 DSH 核心概念（一切皆插件、工具流水线、会话持久化、agent loop）的前提下，用 Go 重建一个可运行、可扩展、跨平台的实现
 - 当前状态：**可运行骨架**已打通全链路（CLI / Web / agent loop / 工具执行 / JSONL 会话），单元测试全绿
 
-> 仓库名与 Go 模块路径均为 `deepseekharness-go`；运行时数据目录仍沿用旧名 `~/.deekseekharness-go/`（改名涉及数据迁移，见 [docs/STATUS.md](docs/STATUS.md) 决策队列 Q-0009）。
+> 仓库名、Go 模块路径与运行时数据目录统一为 `deepseekharness-go`；旧目录 `~/.deekseekharness-go/` 会在首次启动时自动迁移一次（见 [D-0005](docs/decisions/D-0005-data-directory-rename.md)）。
 
 ## 快速开始
 
@@ -57,14 +57,14 @@ go vet ./...
 | `internal/agent` | Agent loop：模型调用 → 工具执行 → 结果回填 → 循环直到最终回答；事件 `agent/started` / `agent/step` / `agent/finished`；迭代上限保护 |
 | `internal/session` | 会话模型 + 追加式 JSONL 持久化（meta 行 + message 行），`Load`/`List`，id 白名单防路径穿越 |
 | `internal/server` | 最小 Web 服务：内嵌 UI、`/healthz`、`/api/sessions*`、`/api/chat`、panic 恢复 |
-| `internal/config` | `~/.deekseekharness-go/config.json` + `DSH_*` 环境变量覆盖、`dsh config init` 生成默认配置 |
+| `internal/config` | `~/.deepseekharness-go/config.json` + `DSH_*` 环境变量覆盖、`dsh config init` 生成默认配置 |
 | `cmd/dsh` | CLI：`version` / `web` / `chat` / `tools` / `config`，优雅退出 |
 
 ## 配置
 
-默认配置路径：`$DSH_CONFIG` 或 `~/.deekseekharness-go/config.json`（文件不存在时使用默认值）。
+默认配置路径：`$DSH_CONFIG` 或 `~/.deepseekharness-go/config.json`（文件不存在时使用默认值）。
 
-> Go 实现的数据目录（`~/.deekseekharness-go/`）与已安装的 DSH 桌面应用（`~/.dsh/`）隔离，避免两套会话/配置格式互相干扰。
+> Go 实现的数据目录（`~/.deepseekharness-go/`）与已安装的 DSH 桌面应用（`~/.dsh/`）隔离，避免两套会话/配置格式互相干扰。旧目录 `~/.deekseekharness-go/` 在首次启动时自动迁移。
 
 ```json
 {
@@ -72,7 +72,7 @@ go vet ./...
   "baseUrl": "https://api.deepseek.com",
   "apiKeyEnv": "DEEPSEEK_API_KEY",
   "workspace": "C:\\path\\to\\workspace",
-  "sessionDir": "C:\\Users\\<you>\\.deekseekharness-go\\sessions",
+  "sessionDir": "C:\\Users\\<you>\\.deepseekharness-go\\sessions",
   "maxIterations": 12,
   "requestTimeoutSec": 120,
   "toolTimeoutSec": 60,

@@ -2,7 +2,7 @@
 //
 // Values are overridable at build time:
 //
-//	go build -ldflags "-X deekseekharness-go/internal/version.Version=0.2.2-go.1"
+//	go build -ldflags "-X github.com/Vicar-c/deepseekharness-go/internal/version.Version=0.2.2-go.1"
 package version
 
 import (

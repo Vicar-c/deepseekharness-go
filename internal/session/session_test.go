@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"deekseekharness-go/internal/llm"
-	"deekseekharness-go/internal/session"
+	"github.com/Vicar-c/deepseekharness-go/internal/llm"
+	"github.com/Vicar-c/deepseekharness-go/internal/session"
 )
 
 func TestStoreCreateAppendLoad(t *testing.T) {

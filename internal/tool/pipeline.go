@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"deekseekharness-go/internal/kernel"
+	"github.com/Vicar-c/deepseekharness-go/internal/kernel"
 )
 
 // EventToolStarted and EventToolExecuted are the pipeline event names.

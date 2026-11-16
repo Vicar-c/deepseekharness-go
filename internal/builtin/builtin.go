@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"deekseekharness-go/internal/kernel"
-	"deekseekharness-go/internal/tool"
+	"github.com/Vicar-c/deepseekharness-go/internal/kernel"
+	"github.com/Vicar-c/deepseekharness-go/internal/tool"
 )
 
 func register(registry *tool.Registry, tools ...tool.Tool) error {

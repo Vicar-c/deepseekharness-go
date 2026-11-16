@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"testing"
 
-	"deekseekharness-go/internal/kernel"
+	"github.com/Vicar-c/deepseekharness-go/internal/kernel"
 )
 
 func testLogger() *slog.Logger {

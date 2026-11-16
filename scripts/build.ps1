@@ -11,7 +11,7 @@ $root = Split-Path -Parent $PSScriptRoot
 Push-Location $root
 try {
     if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
-        throw "go is not on PATH; open a new terminal (the toolchain is installed under C:\Users\ADMIN\AppData\Local\go\bin)"
+        throw "go is not on PATH; open a new terminal (the toolchain is installed under %LOCALAPPDATA%\go\bin)"
     }
     $commit = "unknown"
     try {
@@ -23,9 +23,9 @@ try {
     $buildTime = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
     $ldflags = @(
         "-s", "-w",
-        "-X", "deekseekharness-go/internal/version.Version=$Version",
-        "-X", "deekseekharness-go/internal/version.Commit=$commit",
-        "-X", "deekseekharness-go/internal/version.BuildTime=$buildTime"
+        "-X", "github.com/Vicar-c/deepseekharness-go/internal/version.Version=$Version",
+        "-X", "github.com/Vicar-c/deepseekharness-go/internal/version.Commit=$commit",
+        "-X", "github.com/Vicar-c/deepseekharness-go/internal/version.BuildTime=$buildTime"
     ) -join " "
 
     Write-Host "building $Output (version=$Version commit=$commit)"

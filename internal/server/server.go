@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"deekseekharness-go/internal/config"
-	"deekseekharness-go/internal/session"
-	"deekseekharness-go/internal/version"
+	"github.com/Vicar-c/deepseekharness-go/internal/config"
+	"github.com/Vicar-c/deepseekharness-go/internal/session"
+	"github.com/Vicar-c/deepseekharness-go/internal/version"
 )
 
 //go:embed index.html

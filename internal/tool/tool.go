@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"sync"
 
-	"deekseekharness-go/internal/kernel"
+	"github.com/Vicar-c/deepseekharness-go/internal/kernel"
 )
 
 // Definition describes one tool to the model.

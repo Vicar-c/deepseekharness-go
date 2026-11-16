@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"deekseekharness-go/internal/llm"
+	"github.com/Vicar-c/deepseekharness-go/internal/llm"
 )
 
 func TestDeepSeekChatSendsAuthAndParsesToolCalls(t *testing.T) {

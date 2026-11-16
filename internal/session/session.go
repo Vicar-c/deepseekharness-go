@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"deekseekharness-go/internal/llm"
+	"github.com/Vicar-c/deepseekharness-go/internal/llm"
 )
 
 // Entry types persisted in one session JSONL file.

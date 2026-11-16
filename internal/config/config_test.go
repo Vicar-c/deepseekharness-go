@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"deekseekharness-go/internal/config"
+	"github.com/Vicar-c/deepseekharness-go/internal/config"
 )
 
 func TestLoadDefaultsWhenFileMissing(t *testing.T) {

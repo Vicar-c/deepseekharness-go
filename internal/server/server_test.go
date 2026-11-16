@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"deekseekharness-go/internal/config"
-	"deekseekharness-go/internal/llm"
-	"deekseekharness-go/internal/server"
-	"deekseekharness-go/internal/session"
+	"github.com/Vicar-c/deepseekharness-go/internal/config"
+	"github.com/Vicar-c/deepseekharness-go/internal/llm"
+	"github.com/Vicar-c/deepseekharness-go/internal/server"
+	"github.com/Vicar-c/deepseekharness-go/internal/session"
 )
 
 func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }

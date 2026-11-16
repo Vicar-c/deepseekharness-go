@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"deekseekharness-go/internal/kernel"
-	"deekseekharness-go/internal/tool"
+	"github.com/Vicar-c/deepseekharness-go/internal/kernel"
+	"github.com/Vicar-c/deepseekharness-go/internal/tool"
 )
 
 type fakeTool struct {

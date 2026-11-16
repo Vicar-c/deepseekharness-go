@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"deekseekharness-go/internal/builtin"
-	"deekseekharness-go/internal/kernel"
-	"deekseekharness-go/internal/tool"
+	"github.com/Vicar-c/deepseekharness-go/internal/builtin"
+	"github.com/Vicar-c/deepseekharness-go/internal/kernel"
+	"github.com/Vicar-c/deepseekharness-go/internal/tool"
 )
 
 func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }

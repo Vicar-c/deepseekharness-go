@@ -17,15 +17,15 @@ import (
 	"syscall"
 	"time"
 
-	"deekseekharness-go/internal/agent"
-	"deekseekharness-go/internal/builtin"
-	"deekseekharness-go/internal/config"
-	"deekseekharness-go/internal/kernel"
-	"deekseekharness-go/internal/llm"
-	"deekseekharness-go/internal/server"
-	"deekseekharness-go/internal/session"
-	"deekseekharness-go/internal/tool"
-	"deekseekharness-go/internal/version"
+	"github.com/Vicar-c/deepseekharness-go/internal/agent"
+	"github.com/Vicar-c/deepseekharness-go/internal/builtin"
+	"github.com/Vicar-c/deepseekharness-go/internal/config"
+	"github.com/Vicar-c/deepseekharness-go/internal/kernel"
+	"github.com/Vicar-c/deepseekharness-go/internal/llm"
+	"github.com/Vicar-c/deepseekharness-go/internal/server"
+	"github.com/Vicar-c/deepseekharness-go/internal/session"
+	"github.com/Vicar-c/deepseekharness-go/internal/tool"
+	"github.com/Vicar-c/deepseekharness-go/internal/version"
 )
 
 const usage = `DeepSeek Harness (Go rewrite)
@@ -58,7 +58,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	switch args[0] {
 	case "version", "--version", "-v", "-version":
-		fmt.Fprintln(stdout, "deekseekharness-go", version.String())
+		fmt.Fprintln(stdout, "deepseekharness-go", version.String())
 		return 0
 	case "help", "--help", "-h", "-help":
 		fmt.Fprint(stdout, usage)

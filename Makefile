@@ -3,9 +3,9 @@ VERSION ?= 0.1.0-dev
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w \
-	-X deekseekharness-go/internal/version.Version=$(VERSION) \
-	-X deekseekharness-go/internal/version.Commit=$(COMMIT) \
-	-X deekseekharness-go/internal/version.BuildTime=$(BUILD_TIME)
+	-X github.com/Vicar-c/deepseekharness-go/internal/version.Version=$(VERSION) \
+	-X github.com/Vicar-c/deepseekharness-go/internal/version.Commit=$(COMMIT) \
+	-X github.com/Vicar-c/deepseekharness-go/internal/version.BuildTime=$(BUILD_TIME)
 
 .PHONY: build test vet fmt run web clean
 

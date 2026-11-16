@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"deekseekharness-go/internal/kernel"
-	"deekseekharness-go/internal/llm"
-	"deekseekharness-go/internal/session"
-	"deekseekharness-go/internal/tool"
+	"github.com/Vicar-c/deepseekharness-go/internal/kernel"
+	"github.com/Vicar-c/deepseekharness-go/internal/llm"
+	"github.com/Vicar-c/deepseekharness-go/internal/session"
+	"github.com/Vicar-c/deepseekharness-go/internal/tool"
 )
 
 // Events published by the loop.

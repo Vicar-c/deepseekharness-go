@@ -22,6 +22,7 @@ import (
 	"github.com/Vicar-c/deepseekharness-go/internal/config"
 	"github.com/Vicar-c/deepseekharness-go/internal/kernel"
 	"github.com/Vicar-c/deepseekharness-go/internal/llm"
+	"github.com/Vicar-c/deepseekharness-go/internal/profiles"
 	"github.com/Vicar-c/deepseekharness-go/internal/server"
 	"github.com/Vicar-c/deepseekharness-go/internal/session"
 	"github.com/Vicar-c/deepseekharness-go/internal/tool"
@@ -40,13 +41,22 @@ Usage:
 
 Common flags:
   --config <path>       Config file (default $DSH_CONFIG or ~/.deepseekharness-go/config.json)
+  --profile <name>      Profile to boot (default "default"; built-in: default, headless, web)
+  --patch <path>        Patch file applied after the profile (repeatable)
+  --dump-config         Print the resolved profile and configuration, then exit
   --model <name>        Model name (default deepseek-chat)
   --base-url <url>      OpenAI-compatible base URL (default https://api.deepseek.com)
   --workspace <dir>     Workspace directory (default current directory)
   --log-level <level>   debug|info|warn|error (default info)
 
+Profiles compose the plugins the harness boots. A user profile lives in
+<config dir>/profiles/<name>/ with a package.json declaring "dsh.profile.bundles"
+plus an optional cordis.patch.json; <config dir>/cordis.patch.json applies to
+every profile. Both patch layers run after the environment, before the flags.
+
 Environment:
   DEEPSEEK_API_KEY      API key used by the model client
+  DSH_CONFIG            Config file, which also selects the profile directory
 `
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
@@ -83,6 +93,19 @@ type commonFlags struct {
 	baseURL    string
 	workspace  string
 	logLevel   string
+	profile    string
+	patches    patchList
+	dumpConfig bool
+}
+
+// patchList collects the repeatable --patch flag in command-line order.
+type patchList []string
+
+func (p *patchList) String() string { return strings.Join(*p, ",") }
+
+func (p *patchList) Set(value string) error {
+	*p = append(*p, value)
+	return nil
 }
 
 func addCommonFlags(fs *flag.FlagSet) *commonFlags {
@@ -92,27 +115,52 @@ func addCommonFlags(fs *flag.FlagSet) *commonFlags {
 	fs.StringVar(&flags.baseURL, "base-url", "", "OpenAI-compatible base URL")
 	fs.StringVar(&flags.workspace, "workspace", "", "workspace directory")
 	fs.StringVar(&flags.logLevel, "log-level", "", "debug|info|warn|error")
+	fs.StringVar(&flags.profile, "profile", "", "profile to boot")
+	fs.Var(&flags.patches, "patch", "patch file applied after the profile (repeatable)")
+	fs.BoolVar(&flags.dumpConfig, "dump-config", false, "print the resolved profile and configuration, then exit")
 	return flags
 }
 
-func (flags *commonFlags) load(stderr io.Writer) (config.Config, *slog.Logger, error) {
+func (flags *commonFlags) load(stderr io.Writer) (config.Config, *profiles.Tree, *slog.Logger, error) {
 	migrated, err := config.MigrateLegacyDataDir()
 	if err != nil {
-		return config.Config{}, nil, err
+		return config.Config{}, nil, nil, err
 	}
 	if migrated {
 		fmt.Fprintf(stderr, "dsh: migrated data directory to ~/%s\n", config.DataDirName)
 	}
 	cfg, err := config.Load(flags.configPath)
 	if err != nil {
-		return config.Config{}, nil, err
+		return config.Config{}, nil, nil, err
+	}
+	// Layer order matches the loader: file, environment, profile layers, then
+	// explicit command-line flags.
+	tree, err := profiles.Resolve(profiles.Options{Name: flags.profile, Patches: flags.patches})
+	if err != nil {
+		return config.Config{}, nil, nil, err
+	}
+	if err := tree.ApplySettings(&cfg); err != nil {
+		return config.Config{}, nil, nil, err
 	}
 	cfg.ApplyFlags(flags.model, flags.baseURL, flags.workspace, flags.logLevel)
 	if err := cfg.Normalize(); err != nil {
-		return config.Config{}, nil, err
+		return config.Config{}, nil, nil, err
 	}
 	logger := newLogger(cfg.LogLevel)
-	return cfg, logger, nil
+	return cfg, tree, logger, nil
+}
+
+// dumpIfRequested prints the resolved profile and configuration when
+// --dump-config is set. The second result is the process exit code.
+func dumpIfRequested(flags *commonFlags, cfg config.Config, tree *profiles.Tree, stdout, stderr io.Writer) (bool, int) {
+	if !flags.dumpConfig {
+		return false, 0
+	}
+	if err := tree.Dump(cfg).Encode(stdout); err != nil {
+		fmt.Fprintf(stderr, "dsh: dump config: %v\n", err)
+		return true, 1
+	}
+	return true, 0
 }
 
 func newLogger(level string) *slog.Logger {
@@ -141,7 +189,7 @@ type runtime struct {
 	store    *session.Store
 }
 
-func bootstrap(cfg config.Config, logger *slog.Logger) (*runtime, error) {
+func bootstrap(cfg config.Config, tree *profiles.Tree, logger *slog.Logger) (*runtime, error) {
 	app := kernel.New(logger)
 	registry := tool.NewRegistry()
 	pipeline := tool.NewPipeline(registry, tool.PipelineOptions{
@@ -149,6 +197,7 @@ func bootstrap(cfg config.Config, logger *slog.Logger) (*runtime, error) {
 		Events:         app.Events(),
 		Timeout:        time.Duration(cfg.ToolTimeoutSec) * time.Second,
 		MaxOutputBytes: cfg.MaxToolOutputBytes,
+		MaxParallel:    cfg.MaxParallelToolCalls,
 	})
 	store := session.NewStore(cfg.SessionDir)
 	store.SetWorkspace(cfg.Workspace)
@@ -158,13 +207,13 @@ func bootstrap(cfg config.Config, logger *slog.Logger) (*runtime, error) {
 	kernel.Provide(app.Services(), store)
 
 	workspace := builtin.NewWorkspace(cfg.Workspace)
-	plugins := []kernel.Plugin{
-		builtin.NewFsPlugin(workspace),
-		builtin.NewShellPlugin(workspace),
-		builtin.NewTimePlugin(),
-		builtin.NewTodoPlugin(),
-	}
-	for _, plugin := range plugins {
+	// The profile decides which plugins exist; bootstrap only maps row names to
+	// implementations, so a patch that disables a row really removes its tools.
+	for _, row := range tree.PluginRows() {
+		plugin, err := pluginFor(row, workspace)
+		if err != nil {
+			return nil, err
+		}
 		if err := app.Use(plugin); err != nil {
 			return nil, err
 		}
@@ -175,6 +224,22 @@ func bootstrap(cfg config.Config, logger *slog.Logger) (*runtime, error) {
 		return nil, err
 	}
 	return &runtime{cfg: cfg, logger: logger, app: app, registry: registry, pipeline: pipeline, store: store}, nil
+}
+
+// pluginFor maps one resolved profile row to its kernel plugin.
+func pluginFor(row profiles.Row, workspace *builtin.Workspace) (kernel.Plugin, error) {
+	switch row.Name {
+	case "builtin/fs":
+		return builtin.NewFsPlugin(workspace), nil
+	case "builtin/shell":
+		return builtin.NewShellPlugin(workspace), nil
+	case "builtin/time":
+		return builtin.NewTimePlugin(), nil
+	case "builtin/todo":
+		return builtin.NewTodoPlugin(), nil
+	default:
+		return nil, fmt.Errorf("dsh: profile row %q names unknown plugin %q", row.ID, row.Name)
+	}
 }
 
 func (r *runtime) close() {
@@ -211,14 +276,15 @@ func (r *runtime) newLoop(sess *session.Session) (*agent.Loop, error) {
 		r.cfg.Model, r.cfg.Workspace, strings.Join(toolNames, ", "),
 	)
 	return agent.New(agent.Options{
-		Client:        client,
-		Pipeline:      r.pipeline,
-		Session:       sess,
-		Store:         r.store,
-		Events:        r.app.Events(),
-		Logger:        r.logger,
-		SystemPrompt:  systemPrompt,
-		MaxIterations: r.cfg.MaxIterations,
+		Client:               client,
+		Pipeline:             r.pipeline,
+		Session:              sess,
+		Store:                r.store,
+		Events:               r.app.Events(),
+		Logger:               r.logger,
+		SystemPrompt:         systemPrompt,
+		MaxIterations:        r.cfg.MaxIterations,
+		MaxParallelToolCalls: r.cfg.MaxParallelToolCalls,
 	})
 }
 
@@ -231,12 +297,19 @@ func runWeb(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	cfg, logger, err := flags.load(stderr)
+	cfg, tree, logger, err := flags.load(stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "dsh: %v\n", err)
 		return 1
 	}
-	rt, err := bootstrap(cfg, logger)
+	if dumped, code := dumpIfRequested(flags, cfg, tree, stdout, stderr); dumped {
+		return code
+	}
+	if !tree.Enabled(profiles.TransportWeb) {
+		fmt.Fprintf(stderr, "dsh: profile %q does not enable the web transport (%s)\n", tree.Profile, profiles.TransportWeb)
+		return 1
+	}
+	rt, err := bootstrap(cfg, tree, logger)
 	if err != nil {
 		fmt.Fprintf(stderr, "dsh: boot: %v\n", err)
 		return 1
@@ -283,12 +356,19 @@ func runChat(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	cfg, logger, err := flags.load(stderr)
+	cfg, tree, logger, err := flags.load(stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "dsh: %v\n", err)
 		return 1
 	}
-	rt, err := bootstrap(cfg, logger)
+	if dumped, code := dumpIfRequested(flags, cfg, tree, stdout, stderr); dumped {
+		return code
+	}
+	if !tree.Enabled(profiles.TransportCLI) {
+		fmt.Fprintf(stderr, "dsh: profile %q does not enable the CLI transport (%s)\n", tree.Profile, profiles.TransportCLI)
+		return 1
+	}
+	rt, err := bootstrap(cfg, tree, logger)
 	if err != nil {
 		fmt.Fprintf(stderr, "dsh: boot: %v\n", err)
 		return 1
@@ -397,12 +477,15 @@ func runTools(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	cfg, logger, err := flags.load(stderr)
+	cfg, tree, logger, err := flags.load(stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "dsh: %v\n", err)
 		return 1
 	}
-	rt, err := bootstrap(cfg, logger)
+	if dumped, code := dumpIfRequested(flags, cfg, tree, stdout, stderr); dumped {
+		return code
+	}
+	rt, err := bootstrap(cfg, tree, logger)
 	if err != nil {
 		fmt.Fprintf(stderr, "dsh: boot: %v\n", err)
 		return 1
@@ -448,10 +531,13 @@ func runConfig(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "wrote %s\n", path)
 		return 0
 	}
-	cfg, _, err := flags.load(stderr)
+	cfg, tree, _, err := flags.load(stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "dsh: %v\n", err)
 		return 1
+	}
+	if dumped, code := dumpIfRequested(flags, cfg, tree, stdout, stderr); dumped {
+		return code
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

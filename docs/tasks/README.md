@@ -21,6 +21,7 @@
 | [T-0005](T-0005-rename-and-hardening.md) | 仓库改名 deepseekharness-go、模块路径与文档/CI 加固 | done | 2026-11-16 | D-0004 |
 | [T-0006](T-0006-data-directory-rename.md) | 数据目录改名为 ~/.deepseekharness-go 并迁移 | done | 2026-11-16 | D-0005 |
 | [T-0007](T-0007-batch0-1-tools.md) | 批次 0+1：行尾规范与内置工具补齐 | done | 2026-11-21 | D-0006 |
+| [T-0008](T-0008-session-v4-format-layer.md) | 批次 2 第一步：v4 会话格式类型层与编解码 | done | 2026-11-21 | D-0002、D-0007 |
 
 ## 新建任务步骤
 

@@ -23,6 +23,7 @@
 | [T-0007](T-0007-batch0-1-tools.md) | 批次 0+1：行尾规范与内置工具补齐 | done | 2026-11-21 | D-0006 |
 | [T-0008](T-0008-session-v4-format-layer.md) | 批次 2 第一步：v4 会话格式类型层与编解码 | done | 2026-11-21 | D-0002、D-0007 |
 | [T-0009](T-0009-session-v4-projection-and-writer.md) | 批次 2 第二/三步：v4 投影层与持久化写入器 | done | 2026-11-21 | D-0002、D-0007 |
+| [T-0010](T-0010-session-v4-wiring.md) | 批次 2 收口：Store 与 agent.Loop 接入 v4 | done | 2026-11-21 | D-0002、D-0007 |
 
 ## 新建任务步骤
 

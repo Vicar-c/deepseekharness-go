@@ -42,6 +42,9 @@ type Options struct {
 	SystemPrompt  string
 	MaxIterations int
 	Model         string
+	// MaxParallelToolCalls bounds the overlap of concurrency-safe tool calls in
+	// one model step. Zero uses the tool pipeline default (10); 1 forces serial.
+	MaxParallelToolCalls int
 }
 
 // StepEvent is the "agent/step" payload.
@@ -163,6 +166,7 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 			})
 			return response.Message.Content, nil
 		}
+		batch := make([]tool.Call, 0, len(response.Message.ToolCalls))
 		for _, call := range response.Message.ToolCalls {
 			arguments := normalizeArguments(call.Function.Arguments)
 			toolCall := session.ToolCallData{
@@ -175,7 +179,14 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 			if err := l.record("tool/call", toolCall); err != nil {
 				return "", err
 			}
-			result := l.opts.Pipeline.Execute(ctx, tool.Call{ID: call.ID, Name: call.Function.Name, Arguments: arguments})
+			batch = append(batch, tool.Call{ID: call.ID, Name: call.Function.Name, Arguments: arguments})
+		}
+		// The batch is recorded before it runs: every tool/call is durable while
+		// the work happens, and results are appended in model order afterwards —
+		// completion order never leaks into the model history.
+		results := l.opts.Pipeline.ExecuteBatch(ctx, batch, l.opts.MaxParallelToolCalls)
+		for index, call := range response.Message.ToolCalls {
+			result := results[index]
 			message := llm.ToolResultMessage(call.ID, call.Function.Name, result.Content)
 			data := session.ToolResultData{
 				Turn:    turn,

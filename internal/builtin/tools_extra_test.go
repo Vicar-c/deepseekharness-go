@@ -349,3 +349,52 @@ func TestBuiltinToolsBehaveThroughThePipeline(t *testing.T) {
 		t.Fatalf("unknown tool must become an IsError result, got %+v", unknown)
 	}
 }
+
+// TestBuiltinConcurrencyClassification pins which built-in tools may overlap in
+// one model step. Only read-only tools opt in; a new tool stays exclusive unless
+// it says otherwise.
+func TestBuiltinConcurrencyClassification(t *testing.T) {
+	workspace := t.TempDir()
+	registry := tool.NewRegistry()
+	services := kernel.NewServices()
+	kernel.Provide(services, registry)
+	appContext := &kernel.Context{Logger: testLogger(), Events: kernel.NewEvents(), Services: services}
+	for _, plugin := range []kernel.Plugin{
+		builtin.NewFsPlugin(builtin.NewWorkspace(workspace)),
+		builtin.NewShellPlugin(builtin.NewWorkspace(workspace)),
+		builtin.NewTimePlugin(),
+		builtin.NewTodoPlugin(),
+	} {
+		if err := plugin.Apply(appContext); err != nil {
+			t.Fatalf("Apply(%s): %v", plugin.Name(), err)
+		}
+	}
+
+	wantSafe := map[string]bool{
+		"read": true, "list_dir": true, "glob": true, "grep": true, "read_image": true, "now": true,
+		"write": false, "edit": false, "working_directory": false, "todo_write": false,
+	}
+	// The shell tool is named after the platform dialect.
+	if runtime.GOOS == "windows" {
+		wantSafe["pwsh"] = false
+	} else {
+		wantSafe["bash"] = false
+	}
+	seen := make(map[string]bool, len(wantSafe))
+	for _, registered := range registry.List() {
+		name := registered.Definition().Name
+		want, ok := wantSafe[name]
+		if !ok {
+			t.Fatalf("tool %q is not covered by the concurrency classification", name)
+		}
+		seen[name] = true
+		safe, implements := registered.(tool.ConcurrencySafe)
+		got := implements && safe.ConcurrencySafe()
+		if got != want {
+			t.Fatalf("tool %q concurrency-safe = %v, want %v", name, got, want)
+		}
+	}
+	if len(seen) != len(wantSafe) {
+		t.Fatalf("classified %d tools, registry has %d", len(seen), len(wantSafe))
+	}
+}

@@ -24,6 +24,9 @@ type PipelineOptions struct {
 	Events         *kernel.Events
 	Timeout        time.Duration
 	MaxOutputBytes int
+	// MaxParallel bounds how many concurrency-safe calls overlap inside one
+	// batch. Zero uses the default (10); 1 forces serial execution.
+	MaxParallel int
 }
 
 // Pipeline executes tool calls with guards, timeouts, panic recovery, output
@@ -35,10 +38,14 @@ type Pipeline struct {
 	events         *kernel.Events
 	timeout        time.Duration
 	maxOutputBytes int
+	maxParallel    int
 
 	mu     sync.RWMutex
 	guards []Guard
 }
+
+// defaultMaxParallel mirrors the upstream agent-loop default.
+const defaultMaxParallel = 10
 
 // NewPipeline creates a pipeline around a registry.
 func NewPipeline(registry *Registry, options PipelineOptions) *Pipeline {
@@ -57,12 +64,17 @@ func NewPipeline(registry *Registry, options PipelineOptions) *Pipeline {
 	if maxOutput <= 0 {
 		maxOutput = 128 << 10
 	}
+	maxParallel := options.MaxParallel
+	if maxParallel <= 0 {
+		maxParallel = defaultMaxParallel
+	}
 	return &Pipeline{
 		registry:       registry,
 		logger:         logger,
 		events:         options.Events,
 		timeout:        timeout,
 		maxOutputBytes: maxOutput,
+		maxParallel:    maxParallel,
 	}
 }
 

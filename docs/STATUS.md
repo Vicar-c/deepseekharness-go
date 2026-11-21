@@ -1,7 +1,7 @@
 # 项目状态（跨会话第一入口）
 
 > 更新规则：**每次会话结束前必须更新本文件**。任何 Agent/人接手项目，先读本文件，再读相关任务与决策记录。
-> 最后更新：2026-11-16 · 维护者：lead agent（root）
+> 最后更新：2026-11-21 · 维护者：lead agent（root）
 
 ## 当前阶段
 
@@ -24,6 +24,7 @@
 | 网络 | npmmirror / goproxy.cn 已配置；GitHub 直连不稳，必要时用 OpenSSL 后端与代理 |
 | 远端仓库 | `origin` → <https://github.com/Vicar-c/deepseekharness-go>（2026-11-16 由 `deekseekharness-go` 改名，模块路径同步改为 `github.com/Vicar-c/deepseekharness-go`）；**Git 不读 Windows 系统代理**，已写入仓库级 `http.proxy = http://127.0.0.1:7890` |
 | 提交身份 | `Vicar-c <244100401@qq.com>`（仓库级 `user.name`/`user.email` 固定，规则见 [D-0003](decisions/D-0003-commit-identity.md)） |
+| 工作区状态 | 用户会在代码里写中文学习注释，**不提交、不还原**（[D-0006](decisions/D-0006-user-study-comments.md)）；Agent 提交只显式列自己的路径，禁用 `git add -A` |
 
 ## 已完成
 

@@ -156,10 +156,12 @@ func bootstrap(cfg config.Config, logger *slog.Logger) (*runtime, error) {
 	kernel.Provide(app.Services(), pipeline)
 	kernel.Provide(app.Services(), store)
 
+	workspace := builtin.NewWorkspace(cfg.Workspace)
 	plugins := []kernel.Plugin{
-		builtin.NewFsPlugin(cfg.Workspace),
-		builtin.NewShellPlugin(cfg.Workspace),
+		builtin.NewFsPlugin(workspace),
+		builtin.NewShellPlugin(workspace),
 		builtin.NewTimePlugin(),
+		builtin.NewTodoPlugin(),
 	}
 	for _, plugin := range plugins {
 		if err := app.Use(plugin); err != nil {
@@ -386,8 +388,14 @@ func runTools(args []string, stdout, stderr io.Writer) int {
 
 	definitions := rt.registry.Definitions()
 	fmt.Fprintf(stdout, "%d tools\n\n", len(definitions))
+	width := 12
 	for _, definition := range definitions {
-		fmt.Fprintf(stdout, "%-12s %s\n", definition.Name, definition.Description)
+		if len(definition.Name) > width {
+			width = len(definition.Name)
+		}
+	}
+	for _, definition := range definitions {
+		fmt.Fprintf(stdout, "%-*s  %s\n", width, definition.Name, definition.Description)
 	}
 	return 0
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -253,6 +254,65 @@ func TestShellToolFollowsWorkingDirectory(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(result.Content), "sub") {
 		t.Fatalf("shell did not follow the shared working directory: %q", result.Content)
+	}
+}
+
+// TestShellToolIsKilledWhenThePipelineTimesOut covers the timeout contract the
+// agent loop relies on: a hanging command must come back as an IsError result,
+// quickly, instead of blocking the turn.
+func TestShellToolIsKilledWhenThePipelineTimesOut(t *testing.T) {
+	registry := applyPlugin(t, builtin.NewShellPlugin(builtin.NewWorkspace(t.TempDir())))
+	pipeline := tool.NewPipeline(registry, tool.PipelineOptions{
+		Logger:  testLogger(),
+		Timeout: time.Second,
+	})
+	name := "bash"
+	command := "sleep 5"
+	if runtime.GOOS == "windows" {
+		name = "pwsh"
+		command = "Start-Sleep -Seconds 5"
+	}
+	arguments, err := json.Marshal(map[string]string{"command": command})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	result := pipeline.Execute(context.Background(), tool.Call{ID: "1", Name: name, Arguments: arguments})
+	elapsed := time.Since(started)
+	if !result.IsError {
+		t.Fatalf("hanging command must be an IsError result, got %+v", result)
+	}
+	if elapsed > 4*time.Second {
+		t.Fatalf("timeout took %s, want roughly one second", elapsed)
+	}
+	if !strings.Contains(result.Content, "timed out") && !strings.Contains(result.Content, "exit code") {
+		t.Fatalf("unexpected timeout output: %q", result.Content)
+	}
+}
+
+// TestPipelineGuardBlocksBuiltinTool proves a guard veto reaches the model as a
+// normal IsError result, which is the seam a sandbox or approval policy will
+// plug into later.
+func TestPipelineGuardBlocksBuiltinTool(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "secret.txt"), []byte("top secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	registry := applyPlugin(t, builtin.NewFsPlugin(builtin.NewWorkspace(workspace)))
+	pipeline := tool.NewPipeline(registry, tool.PipelineOptions{
+		Logger:  testLogger(),
+		Timeout: 5 * time.Second,
+	})
+	pipeline.AddGuard(func(ctx context.Context, call tool.Call) error {
+		if call.Name == "read" {
+			return errors.New("blocked by policy")
+		}
+		return nil
+	})
+
+	result := pipeline.Execute(context.Background(), tool.Call{ID: "1", Name: "read", Arguments: json.RawMessage(`{"path":"secret.txt"}`)})
+	if !result.IsError || !strings.Contains(result.Content, "blocked by policy") {
+		t.Fatalf("guard veto not surfaced: %+v", result)
 	}
 }
 

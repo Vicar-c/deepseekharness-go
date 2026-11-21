@@ -99,6 +99,7 @@
 - Agent 提交时**必须显式列出路径**（`git add <file> ...`）；**禁止** `git add -A`、`git add .`、`git commit -a`、`git stash`、`git checkout -- .`。
 - Agent 自己写代码仍遵守 §1.9：代码注释用英文，不写中文注释；也不要把用户的中文注释翻译成英文。
 - 需要改动同一文件时，先确认新改动不覆盖用户注释；确实冲突时保留用户注释，并在任务记录中说明处理方式。
+- **同一文件既有用户注释又有 Agent 改动时**，不能直接 `git add <file>`（会把注释一起入库）：用 `git hash-object -w` + `git update-index --cacheinfo` 只把"工作区内容减去注释行"的 blob 放进索引，工作区保持原样。误提交后：`git reset --soft` 回退 → 重建提交 → `git push --force-with-lease`，并在报告中说明。
 
 ### 1.13 补测试默认授权（D-0007）
 

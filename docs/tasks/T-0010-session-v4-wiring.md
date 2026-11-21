@@ -43,6 +43,12 @@
 - **Store 持有写者并用 `Close` 释放**：避免每次 append 都重新解码整个文件；测试补 `t.Cleanup` 是因为 Windows 上未关闭的句柄会阻塞 `TempDir` 清理（本轮真实踩到）。
 - **保留 `Store.Append`**：Web 测试与只持有 `llm.Message` 的调用方仍可用；它内部映射成对应 surface 事件。
 
+## 事故与修正
+
+- **误把用户注释提交**：本轮首次提交时对 `cmd/dsh/main.go` 用了整文件 `git add`，把用户的 3 行中文学习注释带进了 `feat` 与后续 `docs` 两个提交（违反 D-0006）。
+- **修正**：`git reset --soft` 回退到上一个干净提交 → 用 `git hash-object -w` + `git update-index --cacheinfo` 把"工作区内容减去注释行"的 blob 入库 → 重建两个提交 → `git push --force-with-lease`。远端 `main.go` 复验无注释，用户注释仍保留在工作区。
+- **落盘**：AGENTS.md §1.12 增加"同文件含用户注释时必须用 filtered blob"的操作细则，避免复发。
+
 ## 遗留与下一步
 
 - **跨进程单写者锁**（需要平台实现或依赖，Q-0002 默认不引）。

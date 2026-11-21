@@ -14,7 +14,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Vicar-c/deepseekharness-go/internal/agent"
 	"github.com/Vicar-c/deepseekharness-go/internal/config"
+	"github.com/Vicar-c/deepseekharness-go/internal/kernel"
 	"github.com/Vicar-c/deepseekharness-go/internal/session"
 	"github.com/Vicar-c/deepseekharness-go/internal/version"
 )
@@ -31,6 +33,9 @@ type Options struct {
 	Config config.Config
 	Store  *session.Store
 	Runner ChatRunner
+	// Events carries the transient streaming deltas of the agent loop. When it
+	// is nil the streaming endpoint still works but only sends the final frame.
+	Events *kernel.Events
 	Logger *slog.Logger
 }
 
@@ -179,12 +184,87 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if wantsEventStream(r) {
+		s.streamChat(w, r, sess, input)
+		return
+	}
+
 	reply, err := s.opts.Runner(r.Context(), sess, input)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sessionId": sess.ID, "reply": reply})
+}
+
+// chatStreamFrame is one server-sent event of the streaming chat endpoint.
+type chatStreamFrame struct {
+	Type      string `json:"type"`
+	Text      string `json:"text,omitempty"`
+	SessionID string `json:"sessionId,omitempty"`
+	Reply     string `json:"reply,omitempty"`
+	Message   string `json:"message,omitempty"`
+}
+
+// wantsEventStream reports whether the client asked for server-sent events.
+func wantsEventStream(r *http.Request) bool {
+	return strings.Contains(strings.ToLower(r.Header.Get("Accept")), "text/event-stream")
+}
+
+// streamChat drives one turn and forwards the transient agent deltas as SSE
+// frames. A write failure cancels the turn: nobody is listening any more.
+func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, sess *session.Session, input string) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, errors.New("streaming is not supported by this connection"))
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	var writeErr error
+	send := func(frame chatStreamFrame) {
+		if writeErr != nil {
+			return
+		}
+		data, err := json.Marshal(frame)
+		if err != nil {
+			writeErr = err
+			return
+		}
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+			writeErr = err
+			return
+		}
+		flusher.Flush()
+	}
+
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	unsubscribe := func() {}
+	if s.opts.Events != nil {
+		unsubscribe = s.opts.Events.On(agent.EventAgentStream, func(event kernel.Event) {
+			payload, ok := event.Payload.(agent.StreamEvent)
+			if !ok || payload.SessionID != sess.ID || payload.Content == "" {
+				return
+			}
+			send(chatStreamFrame{Type: "delta", Text: payload.Content})
+			if writeErr != nil {
+				cancel()
+			}
+		})
+	}
+	defer unsubscribe()
+
+	reply, err := s.opts.Runner(ctx, sess, input)
+	if err != nil {
+		send(chatStreamFrame{Type: "error", Message: err.Error()})
+		return
+	}
+	send(chatStreamFrame{Type: "done", SessionID: sess.ID, Reply: reply})
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {

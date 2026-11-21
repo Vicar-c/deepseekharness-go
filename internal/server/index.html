@@ -51,11 +51,19 @@
       const label = document.createElement('span');
       label.className = 'role';
       label.textContent = role;
-      node.appendChild(label);
-      node.appendChild(document.createTextNode(text));
+      const body = document.createElement('span');
+      body.className = 'body';
+      body.textContent = text;
+      node.append(label, body);
       log.appendChild(node);
       node.scrollIntoView({ block: 'end' });
       return node;
+    }
+
+    function setBubbleText(node, text) {
+      const body = node.querySelector('.body');
+      if (body) body.textContent = text;
+      node.scrollIntoView({ block: 'end' });
     }
 
     async function refreshHealth() {
@@ -72,6 +80,31 @@
       }
     }
 
+    // consumeSSE reads one server-sent-event stream and invokes onFrame for every
+    // JSON payload. Frames are separated by a blank line.
+    async function consumeSSE(response, onFrame) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let boundary;
+        while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+          const frame = buffer.slice(0, boundary).trim();
+          buffer = buffer.slice(boundary + 2);
+          if (!frame.startsWith('data:')) continue;
+          try {
+            onFrame(JSON.parse(frame.slice(5).trim()));
+          } catch (error) {
+            await reader.cancel();
+            throw error;
+          }
+        }
+      }
+    }
+
     async function submit() {
       const text = input.value.trim();
       if (!text) return;
@@ -79,20 +112,32 @@
       bubble('you', text, 'user');
       const pending = bubble('harness', '…');
       send.disabled = true;
+      let answer = '';
       try {
         const response = await fetch('/api/chat', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
           body: JSON.stringify({ sessionId, input: text }),
         });
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-        sessionId = payload.sessionId || sessionId;
-        pending.remove();
-        bubble('harness', payload.reply || '(empty reply)');
+        if (!response.ok || !response.body) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(payload.error || `HTTP ${response.status}`);
+        }
+        setBubbleText(pending, '');
+        await consumeSSE(response, (frame) => {
+          if (frame.type === 'delta') {
+            answer += frame.text;
+            setBubbleText(pending, answer);
+          } else if (frame.type === 'done') {
+            sessionId = frame.sessionId || sessionId;
+            if (!answer) setBubbleText(pending, frame.reply || '(empty reply)');
+          } else if (frame.type === 'error') {
+            throw new Error(frame.message || 'stream failed');
+          }
+        });
       } catch (error) {
-        pending.remove();
-        bubble('harness', String(error.message || error), 'error');
+        pending.classList.add('error');
+        setBubbleText(pending, String(error.message || error));
       } finally {
         send.disabled = false;
         input.focus();

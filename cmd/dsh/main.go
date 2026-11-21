@@ -256,7 +256,7 @@ func runWeb(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	srv, err := server.New(server.Options{Config: cfg, Store: rt.store, Runner: runner, Logger: logger})
+	srv, err := server.New(server.Options{Config: cfg, Store: rt.store, Runner: runner, Events: rt.app.Events(), Logger: logger})
 	if err != nil {
 		fmt.Fprintf(stderr, "dsh: web: %v\n", err)
 		return 1

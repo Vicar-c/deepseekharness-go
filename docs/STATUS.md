@@ -38,10 +38,12 @@
 - 发布：仓库级提交身份固定为 `Vicar-c <244100401@qq.com>`（6 个历史提交已改写为该身份），远端 `origin` 指向 GitHub；记录见 [D-0003](decisions/D-0003-commit-identity.md) 与 [T-0004](tasks/T-0004-github-publication.md)。
 - 改名与加固：仓库、模块路径、文档统一为 `deepseekharness-go`（`github.com/Vicar-c/deepseekharness-go`）；文档中的本机绝对路径替换为 `%USERPROFILE%` / `%LOCALAPPDATA%` 可移植写法；新增 GitHub Actions CI（ubuntu / windows 双平台）。记录见 [D-0004](decisions/D-0004-rename-and-hardening.md) 与 [T-0005](tasks/T-0005-rename-and-hardening.md)。
 - 数据目录：`~/.deepseekharness-go/` 落地，旧目录首次启动自动迁移（本机实测 2 个历史会话完整保留）；`--config` 帮助文本同步修正。记录见 [D-0005](decisions/D-0005-data-directory-rename.md) 与 [T-0006](tasks/T-0006-data-directory-rename.md)。
+- 工具面（批次 0+1）：`.gitattributes` 行尾规范；`builtin` 拆分为 6 个文件，新增 `edit`/`glob`/`grep`/`read_image`/`todo_write`/`working_directory`，文件与 shell 工具共享 `Workspace`，工具数 5 → **11**。记录见 [T-0007](tasks/T-0007-batch0-1-tools.md)。
 
 ## 进行中
 
-- 无功能实施。发布、改名与数据目录整理已完成（[T-0005](tasks/T-0005-rename-and-hardening.md)、[T-0006](tasks/T-0006-data-directory-rename.md)）；等待用户逐项决策 Q-0001…Q-0005，收到明确"实现"指令后才启动 P1。
+- 无功能实施。发布、改名与数据目录整理已完成（[T-0005](tasks/T-0005-rename-and-hardening.md)、[T-0006](tasks/T-0006-data-directory-rename.md)）。
+- 批次 0+1 已完成（[T-0007](tasks/T-0007-batch0-1-tools.md)）：行尾规范 + 内置工具补齐。**下一步批次 2（会话格式 v4）待用户确认开工**；Q-0002 / Q-0004 / Q-0005 仍未决。
 
 ## 决策队列（与会话内表格同源）
 
@@ -50,9 +52,9 @@
 
 | ID | 待决问题 | 选项 | 建议 | 状态 |
 |---|---|---|---|---|
-| Q-0001 | P1 先做哪条主线？ | A. 会话格式 v4 / B. 流式 SSE / C. 工具补齐 | A | 待决策 |
+| Q-0001 | P1 先做哪条主线？ | A. 会话格式 v4 / B. 流式 SSE / C. 工具补齐 | A | **部分决策**：用户指定"开工 0->1"，即先做工具面（C）；批次 2（会话 v4）待确认 |
 | Q-0002 | 是否引入第三方 Go 依赖？ | A. 暂不引入（P1 全标准库）/ B. 允许 zstd、sqlite、websocket 等按需引入 | A | 待决策 |
-| Q-0003 | 是否规范化行尾？ | A. 保持现状 / B. 增加 `.gitattributes`（`* text=auto eol=lf`） | B | 待决策 |
+| Q-0003 | 是否规范化行尾？ | A. 保持现状 / B. 增加 `.gitattributes`（`* text=auto eol=lf`） | B | **resolved**：已加 `.gitattributes`（[T-0007](tasks/T-0007-batch0-1-tools.md)） |
 | Q-0004 | 是否与上游 TS 实现做 session 互操作验证？ | A. 暂不做 / B. P1 一起做 | B | 待决策 |
 | Q-0005 | 是否确认 D-0001-06…14 的代理推导基调？ | A. 全部接受 / B. 部分修订（指出条目）/ C. 否决 | A | 待决策 |
 | Q-0006 | 是否给模块路径补 host 前缀？ | A. 改为 `github.com/Vicar-c/deepseekharness-go` + 同步 import / B. 保持现状 | A | **resolved**：已按 A 处理（[T-0005](tasks/T-0005-rename-and-hardening.md)） |
@@ -82,6 +84,14 @@
 - GitHub Actions `CI`（ubuntu + windows）→ `43d262d` 起全绿；`7add8f7`（数据目录改名）同样双平台 success
 - 数据目录迁移：旧 `~/.deekseekharness-go` → `~/.deepseekharness-go`，2 个历史会话完整保留；二次运行无提示（幂等）
 - `python scripts/check_md_links.py` → 22 个 md、95 条相对链接、0 缺失
+
+### 批次 0+1（2026-11-21）
+
+- `gofmt -l .` → 无输出；`go vet ./...` → exit 0
+- `go test ./... -count=1` → 8 个包 ok（含 6 个新工具用例）
+- `go build ./cmd/dsh` → exit 0；`dsh tools` → **11 tools**、`plugins=4`
+- `.gitattributes`：索引本已是 LF，本次只改策略、无内容 diff
+- 提交：`c186947`（注释规则）、`8d0499b`（工具）；用户注释未入库
 
 ## 相关入口
 

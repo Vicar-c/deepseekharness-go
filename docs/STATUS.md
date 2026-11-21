@@ -44,14 +44,15 @@
 - v4 投影与写入器（批次 2 第二/三步）：`Recording.Project()` 把 surface 事件投影成 `[]llm.Message`（含 replace 语义、tool 名字反查），`Writer` 支持原子创建、seq 续写、进程内单写者、崩溃尾部修复。记录见 [T-0009](tasks/T-0009-session-v4-projection-and-writer.md)。
 - v4 接线（批次 2 收口）：`Store` 写 header + 事件、`Load` 走"修复 → 解码 → 投影"，`agent.Loop` 一次对话写完整 turn/step/tool 事件序列；真实 CLI（mock 模型与**真实 API**）均产出合法 v4 日志。记录见 [T-0010](tasks/T-0010-session-v4-wiring.md)。
 - 流式（批次 3 第一步）：`llm.StreamingClient`（可选接口，不破坏 `Client`）+ DeepSeek SSE 解析与增量组装、`agent/stream` 瞬态事件、CLI 逐字输出（只打印一次）；真实 API 流式已验证。记录见 [T-0011](tasks/T-0011-streaming-llm-agent-cli.md)。
+- Web 流式（批次 3 收口）：`/api/chat` 按 `Accept: text/event-stream` 协商输出 SSE（`delta` / `done` / `error` 帧），前端 `fetch` + `ReadableStream` 逐字渲染；普通 JSON 调用保持兼容。记录见 [T-0012](tasks/T-0012-web-sse.md)。
 
 ## 进行中
 
 - 发布、改名与数据目录整理已完成（[T-0005](tasks/T-0005-rename-and-hardening.md)、[T-0006](tasks/T-0006-data-directory-rename.md)）。
 - 批次 0+1 已完成（[T-0007](tasks/T-0007-batch0-1-tools.md)）：行尾规范 + 内置工具补齐。
 - **批次 2 已完成**（[T-0008](tasks/T-0008-session-v4-format-layer.md)、[T-0009](tasks/T-0009-session-v4-projection-and-writer.md)、[T-0010](tasks/T-0010-session-v4-wiring.md)）：会话以 v4 事件流落盘，CLI / Web / agent 全链路接通；真实 DeepSeek API 已验证（13 行日志，含 `tool/call` + `tool/result`）。
-- **批次 3 进行中**（用户"继续"授权）：流式已打通 `llm.StreamingClient` → `agent.Loop` → CLI（真实 API 验证通过）；**剩 Web SSE + 前端逐字渲染**。
-- 批次 4（profiles + `--dump-config`）排队中。
+- **批次 3 已完成**（[T-0011](tasks/T-0011-streaming-llm-agent-cli.md)、[T-0012](tasks/T-0012-web-sse.md)）：流式全链路 `llm.StreamingClient → agent/stream → CLI / Web SSE`，真实 API 与真实 `dsh web` 进程均已验证。
+- 下一步：批次 4（profiles + `--dump-config` + 工具批次语义），待用户指定或按序继续。
 
 ## 决策队列（与会话内表格同源）
 
@@ -135,6 +136,13 @@
 - 真实 CLI + SSE mock：stdout 恰好 `Hello from mock`（出现 1 次，无重复）
 - **真实 DeepSeek API（流式）**：输出 `stream-ok`，退出码 0，落盘 assistant 内容一致
 - 仍有待做：Web `/api/chat` 的 SSE 与前端逐字渲染
+
+### 批次 3 收口：Web SSE（2026-11-21）
+
+- 单元：4 个 server 用例（delta+done、跨会话过滤、错误帧、非流式兼容）；server 包 9 个、全仓库 95 个用例
+- **真实 `dsh web` 进程 + mock 流式模型**：`/healthz` 正常、首页含 SSE 前端逻辑、`POST /api/chat`（Accept SSE）收到 `delta`×3 + `done{reply:"web-stream"}`
+- 前端浏览器渲染未做自动化（无 headless 浏览器），只做内容级断言 + 协议级真机请求
+- `gofmt` / `vet` / `staticcheck` / `go test` 全绿
 
 ## 相关入口
 

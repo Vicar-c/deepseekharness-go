@@ -25,6 +25,7 @@
 | [T-0009](T-0009-session-v4-projection-and-writer.md) | 批次 2 第二/三步：v4 投影层与持久化写入器 | done | 2026-11-21 | D-0002、D-0007 |
 | [T-0010](T-0010-session-v4-wiring.md) | 批次 2 收口：Store 与 agent.Loop 接入 v4 | done | 2026-11-21 | D-0002、D-0007 |
 | [T-0011](T-0011-streaming-llm-agent-cli.md) | 批次 3 第一步：流式（LLM → agent → CLI） | done | 2026-11-21 | D-0002、D-0007 |
+| [T-0012](T-0012-web-sse.md) | 批次 3 收口：Web SSE | done | 2026-11-21 | D-0002、D-0007 |
 
 ## 新建任务步骤
 

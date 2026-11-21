@@ -19,6 +19,9 @@ const (
 	DefaultBaseURL = "https://api.deepseek.com"
 	// DefaultAPIKeyEnv is the environment variable holding the API key.
 	DefaultAPIKeyEnv = "DEEPSEEK_API_KEY"
+	// DefaultMaxParallelToolCalls is how many concurrency-safe tool calls may
+	// overlap inside one model step. 1 forces serial execution.
+	DefaultMaxParallelToolCalls = 10
 	// DataDirName is the directory under the user's home that holds the config
 	// file and the sessions. It is kept out of ~/.dsh so the Go rewrite never
 	// touches the installed desktop app's data.
@@ -40,7 +43,14 @@ type Config struct {
 	RequestTimeoutSec  int    `json:"requestTimeoutSec"`
 	ToolTimeoutSec     int    `json:"toolTimeoutSec"`
 	MaxToolOutputBytes int    `json:"maxToolOutputBytes"`
-	LogLevel           string `json:"logLevel"`
+	// MaxParallelToolCalls bounds how many concurrency-safe tool calls run at
+	// the same time inside one step; 1 makes every batch serial.
+	MaxParallelToolCalls int    `json:"maxParallelToolCalls"`
+	LogLevel             string `json:"logLevel"`
+
+	// sources records the layer each setting came from (default, file, env,
+	// flag, bundle, profile, home patch, --patch). It is never serialized.
+	sources map[string]string
 }
 
 // Default returns the built-in configuration.
@@ -53,18 +63,21 @@ func Default() Config {
 	if err == nil {
 		workspace = abs
 	}
-	return Config{
-		Model:              DefaultModel,
-		BaseURL:            DefaultBaseURL,
-		APIKeyEnv:          DefaultAPIKeyEnv,
-		Workspace:          workspace,
-		SessionDir:         defaultSessionDir(),
-		MaxIterations:      12,
-		RequestTimeoutSec:  120,
-		ToolTimeoutSec:     60,
-		MaxToolOutputBytes: 128 * 1024,
-		LogLevel:           "info",
+	cfg := Config{
+		Model:                DefaultModel,
+		BaseURL:              DefaultBaseURL,
+		APIKeyEnv:            DefaultAPIKeyEnv,
+		Workspace:            workspace,
+		SessionDir:           defaultSessionDir(),
+		MaxIterations:        12,
+		RequestTimeoutSec:    120,
+		ToolTimeoutSec:       60,
+		MaxToolOutputBytes:   128 * 1024,
+		MaxParallelToolCalls: DefaultMaxParallelToolCalls,
+		LogLevel:             "info",
 	}
+	cfg.markDefaults()
+	return cfg
 }
 
 // FilePath resolves the config file location: $DSH_CONFIG wins, otherwise
@@ -91,8 +104,18 @@ func Load(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	switch {
 	case err == nil:
+		data = StripBOM(data)
+		var present map[string]json.RawMessage
+		if err := json.Unmarshal(data, &present); err != nil {
+			return Config{}, fmt.Errorf("config: parse %s: %w", path, err)
+		}
 		if err := json.Unmarshal(data, &cfg); err != nil {
 			return Config{}, fmt.Errorf("config: parse %s: %w", path, err)
+		}
+		for key := range present {
+			if IsField(key) {
+				cfg.mark(key, SourceFilePrefix+path)
+			}
 		}
 	case errors.Is(err, os.ErrNotExist):
 		// Defaults are intentional: the harness must start on a fresh machine.
@@ -111,36 +134,50 @@ func (c *Config) Normalize() error {
 	base := Default()
 	if c.Model == "" {
 		c.Model = base.Model
+		c.mark(FieldModel, SourceDefault)
 	}
 	if c.BaseURL == "" {
 		c.BaseURL = base.BaseURL
+		c.mark(FieldBaseURL, SourceDefault)
 	}
 	if c.APIKeyEnv == "" {
 		c.APIKeyEnv = base.APIKeyEnv
+		c.mark(FieldAPIKeyEnv, SourceDefault)
 	}
 	if c.Workspace == "" {
 		c.Workspace = base.Workspace
+		c.mark(FieldWorkspace, SourceDefault)
 	}
 	if abs, err := filepath.Abs(c.Workspace); err == nil {
 		c.Workspace = abs
 	}
 	if c.SessionDir == "" {
 		c.SessionDir = base.SessionDir
+		c.mark(FieldSessionDir, SourceDefault)
 	}
 	if c.MaxIterations <= 0 {
 		c.MaxIterations = base.MaxIterations
+		c.mark(FieldMaxIterations, SourceDefault)
 	}
 	if c.RequestTimeoutSec <= 0 {
 		c.RequestTimeoutSec = base.RequestTimeoutSec
+		c.mark(FieldRequestTimeoutSec, SourceDefault)
 	}
 	if c.ToolTimeoutSec <= 0 {
 		c.ToolTimeoutSec = base.ToolTimeoutSec
+		c.mark(FieldToolTimeoutSec, SourceDefault)
 	}
 	if c.MaxToolOutputBytes <= 0 {
 		c.MaxToolOutputBytes = base.MaxToolOutputBytes
+		c.mark(FieldMaxToolOutputBytes, SourceDefault)
+	}
+	if c.MaxParallelToolCalls <= 0 {
+		c.MaxParallelToolCalls = base.MaxParallelToolCalls
+		c.mark(FieldMaxParallelToolCalls, SourceDefault)
 	}
 	if c.LogLevel == "" {
 		c.LogLevel = base.LogLevel
+		c.mark(FieldLogLevel, SourceDefault)
 	}
 	if strings.TrimSpace(c.Model) == "" {
 		return errors.New("config: model must not be empty")
@@ -184,39 +221,54 @@ func (c Config) APIKey() string {
 func (c *Config) ApplyFlags(model, baseURL, workspace, logLevel string) {
 	if model != "" {
 		c.Model = model
+		c.mark(FieldModel, SourceFlagPrefix+"--model")
 	}
 	if baseURL != "" {
 		c.BaseURL = baseURL
+		c.mark(FieldBaseURL, SourceFlagPrefix+"--base-url")
 	}
 	if workspace != "" {
 		c.Workspace = workspace
+		c.mark(FieldWorkspace, SourceFlagPrefix+"--workspace")
 	}
 	if logLevel != "" {
 		c.LogLevel = logLevel
+		c.mark(FieldLogLevel, SourceFlagPrefix+"--log-level")
 	}
 }
 
 func (c *Config) applyEnv() {
 	if value := os.Getenv("DSH_MODEL"); value != "" {
 		c.Model = value
+		c.mark(FieldModel, SourceEnvPrefix+"DSH_MODEL")
 	}
 	if value := os.Getenv("DSH_BASE_URL"); value != "" {
 		c.BaseURL = value
+		c.mark(FieldBaseURL, SourceEnvPrefix+"DSH_BASE_URL")
 	}
 	if value := os.Getenv("DSH_API_KEY_ENV"); value != "" {
 		c.APIKeyEnv = value
+		c.mark(FieldAPIKeyEnv, SourceEnvPrefix+"DSH_API_KEY_ENV")
 	}
 	if value := os.Getenv("DSH_WORKSPACE"); value != "" {
 		c.Workspace = value
+		c.mark(FieldWorkspace, SourceEnvPrefix+"DSH_WORKSPACE")
 	}
 	if value := os.Getenv("DSH_SESSION_DIR"); value != "" {
 		c.SessionDir = value
+		c.mark(FieldSessionDir, SourceEnvPrefix+"DSH_SESSION_DIR")
 	}
 	if value := os.Getenv("DSH_LOG_LEVEL"); value != "" {
 		c.LogLevel = value
+		c.mark(FieldLogLevel, SourceEnvPrefix+"DSH_LOG_LEVEL")
 	}
 	if value, err := strconv.Atoi(os.Getenv("DSH_MAX_ITERATIONS")); err == nil && value > 0 {
 		c.MaxIterations = value
+		c.mark(FieldMaxIterations, SourceEnvPrefix+"DSH_MAX_ITERATIONS")
+	}
+	if value, err := strconv.Atoi(os.Getenv("DSH_MAX_PARALLEL_TOOL_CALLS")); err == nil && value > 0 {
+		c.MaxParallelToolCalls = value
+		c.mark(FieldMaxParallelToolCalls, SourceEnvPrefix+"DSH_MAX_PARALLEL_TOOL_CALLS")
 	}
 }
 

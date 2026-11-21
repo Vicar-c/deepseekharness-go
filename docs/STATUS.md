@@ -22,7 +22,7 @@
 | 密钥 | `DEEPSEEK_API_KEY` 已配置于**用户环境变量**（不落盘、不入库）；当前 DSH 会话内需手动设置后才可见 |
 | 数据目录 | `~/.deepseekharness-go/`（config + sessions）；旧目录 `~/.deekseekharness-go/` 已在本机一次性迁移完毕，迁移逻辑见 [D-0005](decisions/D-0005-data-directory-rename.md) 与 [T-0006](tasks/T-0006-data-directory-rename.md) |
 | 网络 | npmmirror / goproxy.cn 已配置；GitHub 直连不稳，必要时用 OpenSSL 后端与代理 |
-| 远端仓库 | `origin` → <https://github.com/Vicar-c/deepseekharness-go>（2026-11-16 由 `deekseekharness-go` 改名，模块路径同步改为 `github.com/Vicar-c/deepseekharness-go`）；**Git 不读 Windows 系统代理**，已写入仓库级 `http.proxy = http://127.0.0.1:7890` |
+| 远端仓库 | `origin` → <https://github.com/Vicar-c/deepseekharness-go>（2026-11-16 由 `deekseekharness-go` 改名，模块路径同步改为 `github.com/Vicar-c/deepseekharness-go`）；**Git 不读 Windows 系统代理**。2026-11-21：本机代理未运行、直连可用，已移除仓库级 `http.proxy`；若直连再次失败，重新设置 `git config --local http.proxy http://127.0.0.1:7890` |
 | 提交身份 | `Vicar-c <244100401@qq.com>`（仓库级 `user.name`/`user.email` 固定，规则见 [D-0003](decisions/D-0003-commit-identity.md)） |
 | 工作区状态 | 用户会在代码里写中文学习注释，**不提交、不还原**（[D-0006](decisions/D-0006-user-study-comments.md)）；Agent 提交只显式列自己的路径，禁用 `git add -A` |
 | 补测试 | 为已实现行为补测试**无需询问**，直接执行（[D-0007](decisions/D-0007-test-backfill-authorization.md)）；发现缺陷需改实现时回到 D-0002 门禁 |

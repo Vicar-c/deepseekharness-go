@@ -43,3 +43,36 @@ jobs:
 
       - name: go build
         run: go build ./cmd/dsh
+
+  webui:
+    name: webui (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            chrome: /usr/bin/google-chrome
+          - os: windows-latest
+            chrome: C:\Program Files\Google\Chrome\Application\chrome.exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: build dsh
+        shell: bash
+        run: go build -o bin/dsh$( [ "$RUNNER_OS" = "Windows" ] && echo .exe ) ./cmd/dsh
+
+      - name: browser end-to-end
+        shell: bash
+        run: |
+          dsh="./bin/dsh"; [ "$RUNNER_OS" = "Windows" ] && dsh="./bin/dsh.exe"
+          node scripts/webui-e2e.mjs --dsh "$dsh" --chrome "${{ matrix.chrome }}"

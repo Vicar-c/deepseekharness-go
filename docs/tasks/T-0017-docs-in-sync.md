@@ -1,4 +1,4 @@
-﻿# T-0017 · 文档随实现同步：README 重写与文档契约测试
+# T-0017 · 文档随实现同步：README 重写与文档契约测试
 
 - **状态**：done
 - **更新**：2026-11-21
@@ -33,7 +33,7 @@
 
 | 验证 | 结果 |
 |---|---|
-| `go test ./cmd/dsh -count=1` | 3 个用例通过（此前 `cmd/dsh` 覆盖率 0%） |
+| `go test ./cmd/dsh -count=1` | 4 个用例通过：3 个文档契约 + 1 个 dispatch/退出码用例；`cmd/dsh` 覆盖率从 0%（无测试）到 3.4%（其余分支需要真实 boot/网络） |
 | **负向验证：删掉 README 的 `read` 行** | `TestReadmeToolTableMatchesTheRegistry` 失败：`tool "read" is registered but missing from the README tool table` |
 | **负向验证：从配置示例删掉 `maxParallelToolCalls`** | `TestReadmeConfigExampleMatchesTheSettings` 失败并打印两边键集合 |
 | 恢复 README 后 | 3 个用例恢复通过 |

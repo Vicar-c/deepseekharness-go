@@ -19,7 +19,7 @@ DeepSeek Harness（DSH）的 **Go 重写实现**：保留上游的产品语义�
 | 组合 | **profiles**：`bundle → profile patch → home patch → --patch` 层叠，`--dump-config` 打印每行与每个设置的来源 |
 | CLI | `version` / `web` / `chat` / `tools` / `config`；`--prompt` 单轮、`--session` 续接 |
 | Web | 内嵌 UI（`fetch` + `ReadableStream` 逐字渲染）、`/api/chat` 支持 JSON 与 SSE（Accept 协商） |
-| 测试 | 122 个 Go 用例（覆盖率 65%–84%）+ 真实浏览器 E2E（CDP 驱动 Chrome） |
+| 测试 | 126 个 Go 用例（`internal/*` 覆盖率 65%–84%）+ 真实浏览器 E2E（CDP 驱动 Chrome） |
 
 ## 快速开始
 
@@ -148,7 +148,7 @@ bundle patches → profile patch → home patch(cordis.patch.json) → --patch
 gofmt -l .                                  # 必须无输出
 go vet ./...
 & "$env:USERPROFILE\go\bin\staticcheck.exe" ./...
-go test ./... -count=1                      # 122 个用例
+go test ./... -count=1                      # 126 个用例（含 README 命令/工具/配置契约测试）
 .\scripts\build.ps1                         # bin\dsh.exe（注入版本与 commit）
 
 # 浏览器端 E2E（真实 Chrome，CDP，零 npm 依赖）

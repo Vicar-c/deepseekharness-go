@@ -1,4 +1,4 @@
-﻿# 项目状态（跨会话第一入口）
+# 项目状态（跨会话第一入口）
 
 > 更新规则：**每次会话结束前必须更新本文件**。任何 Agent/人接手项目，先读本文件，再读相关任务与决策记录。
 > 最后更新：2026-11-21 · 维护者：lead agent（root）
@@ -188,7 +188,7 @@
 
 ### 文档同步（2026-11-21）
 
-- `go test ./cmd/dsh` → 3 个文档契约用例（此前该包覆盖率 0%）；负向验证：删 README 的 `read` 行 / 删配置示例的 `maxParallelToolCalls` 都会让测试失败并指出差异
+- `go test ./cmd/dsh` → 4 个用例（3 个文档契约 + 1 个 dispatch/退出码），全仓库 **126 个用例**；负向验证：删 README 的 `read` 行 / 删配置示例的 `maxParallelToolCalls` 都会让测试失败并指出差异
 - `python scripts/check_md_links.py` → 38 篇 md、173 条相对链接、0 缺失
 - CI 新增 Markdown 链接校验（Linux）；README 命令/工具/配置三块由 `go test ./...` 在双平台强制
 - 提交：README 重写、文档契约测试、CI 链接校验、AGENTS §1.14 + D-0008 记录

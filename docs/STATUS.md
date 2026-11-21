@@ -1,4 +1,4 @@
-# 项目状态（跨会话第一入口）
+﻿# 项目状态（跨会话第一入口）
 
 > 更新规则：**每次会话结束前必须更新本文件**。任何 Agent/人接手项目，先读本文件，再读相关任务与决策记录。
 > 最后更新：2026-11-21 · 维护者：lead agent（root）
@@ -50,6 +50,7 @@
 - profiles 层叠（批次 4）：`internal/profiles` 实现 `bundle → profile patch → home patch → --patch`，`--profile` / `--patch` / `--dump-config` 上线；bundle 为 `base` / `web-app` / `headless`，profile 由内建名或 `<config dir>/profiles/<name>/package.json` 定义；传输门禁让 `dsh web --profile headless` 这类错误组合快速失败。记录见 [T-0014](tasks/T-0014-profiles-and-dump-config.md)。
 - 工具批次（批次 4）：`tool.ConcurrencySafe` 可选接口 + `Pipeline.ExecuteBatch`（并发上限、独占 barrier、模型序结果槽、取消语义），内置工具中仅只读的 6 个 opt-in；`agent.Loop` 先落全部 `tool/call` 再按模型序落 `tool/result`。记录见 [T-0015](tasks/T-0015-tool-batch.md)。
 - 差距审计（2026-11-21）：重读全部代码与文档，对照 P1 范围/验收与 §6 兼容性条目，实跑 CLI 与真实 API 复现崩溃恢复；**P1 验收 ②（resume 补齐）与 ③（并发会话压测）实测未达标**，另有请求信封、系统提示落盘、fsync 屏障、跨进程锁、LLM 错误分类等缺口。记录见 [T-0016](tasks/T-0016-gap-audit.md)。
+- 文档同步机制（2026-11-21）：用户要求"文档随实现并行更新"→ [D-0008](decisions/D-0008-docs-in-sync.md)；重写 README（11 工具 / v4 / 流式 / profiles / 批次并发），新增 `cmd/dsh/docs_test.go` 把 **命令清单、工具表、配置示例** 钉成测试（负向验证过），AGENTS.md §1.14 规定改动↔文档对照表，CI 增加 Markdown 链接校验。记录见 [T-0017](tasks/T-0017-docs-in-sync.md)。
 
 ## 进行中
 
@@ -184,6 +185,13 @@
 - **实测未达标 ②**：无并发会话用例（P1 验收 ③ 无网）
 - **实测缺陷**：会话日志不容忍 BOM；`Store.Load` 相信 header id（改名文件 → 指向旧文件名报错）
 - 静态核对缺口：`request/header`、`request/context`、`system/message` 从未写入；无 fsync 屏障；写者锁仅进程内；内核只有 `Emit`；LLM 无错误分类；CLI 无 SIGINT 130/启动诊断；Web 无鉴权；README 陈旧；CI 缺 staticcheck 与 md 链接检查
+
+### 文档同步（2026-11-21）
+
+- `go test ./cmd/dsh` → 3 个文档契约用例（此前该包覆盖率 0%）；负向验证：删 README 的 `read` 行 / 删配置示例的 `maxParallelToolCalls` 都会让测试失败并指出差异
+- `python scripts/check_md_links.py` → 38 篇 md、173 条相对链接、0 缺失
+- CI 新增 Markdown 链接校验（Linux）；README 命令/工具/配置三块由 `go test ./...` 在双平台强制
+- 提交：README 重写、文档契约测试、CI 链接校验、AGENTS §1.14 + D-0008 记录
 
 ## 相关入口
 

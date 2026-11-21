@@ -1,0 +1,12 @@
+# Normalize line endings for every platform: the repository stores LF text and
+# every checkout gets LF, so diffs, gofmt and CI behave identically everywhere.
+* text=auto eol=lf
+
+# Binary assets must never be converted.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.exe binary
+*.zst binary

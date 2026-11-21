@@ -190,6 +190,36 @@ func TestReadmeToolTableMatchesTheRegistry(t *testing.T) {
 	}
 }
 
+// TestRunDispatchesSafeCommands exercises the CLI entry point without booting a
+// kernel or touching the network: the help/version paths must succeed and an
+// unknown command must exit with the usage-error code.
+func TestRunDispatchesSafeCommands(t *testing.T) {
+	cases := []struct {
+		name     string
+		args     []string
+		wantCode int
+		wantOut  string
+	}{
+		{"no arguments prints usage", nil, 0, "dsh web"},
+		{"help", []string{"help"}, 0, "dsh chat"},
+		{"long help flag", []string{"--help"}, 0, "Common flags:"},
+		{"version", []string{"version"}, 0, "deepseekharness-go"},
+		{"unknown command", []string{"definitely-not-a-command"}, 2, "unknown command"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var stdout, stderr strings.Builder
+			if code := run(testCase.args, &stdout, &stderr); code != testCase.wantCode {
+				t.Fatalf("run(%v) = %d, want %d (stderr: %s)", testCase.args, code, testCase.wantCode, stderr.String())
+			}
+			combined := stdout.String() + stderr.String()
+			if !strings.Contains(combined, testCase.wantOut) {
+				t.Fatalf("run(%v) output = %q, want it to contain %q", testCase.args, combined, testCase.wantOut)
+			}
+		})
+	}
+}
+
 // jsonBlocks returns every fenced ```json block of the README.
 func jsonBlocks(t *testing.T) []string {
 	t.Helper()

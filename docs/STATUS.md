@@ -5,12 +5,12 @@
 
 ## 当前阶段
 
-**P0 骨架完成 + 真实 API 验证通过；P1 尚未启动（决策门禁中）。**
+**P1 单 agent 闭环已完成主体（批次 0–4）；真实 API 与真实浏览器均已验证。**
 
 项目：DeepSeek Harness（DSH）的 Go 重写实现，运行入口 `cmd/dsh`。
 参考源码：`%USERPROFILE%\Desktop\deepseekharness`（上游 TS 实现，只读）。
 
-> **实施门禁（D-0002）生效**：决策队列未清空、且用户未明确说"实现"之前，不进行任何功能实施。
+> **实施门禁（D-0002）**：用户逐轮的"继续/开工"即为对应批次的实施授权；新的范围仍需单独决策。
 
 ## 环境事实
 
@@ -20,7 +20,7 @@
 | Go 工具 | gopls v0.24.0、dlv、staticcheck 2026.2.2、golangci-lint v2.15.0、goimports、air、wire（`%USERPROFILE%\go\bin`） |
 | Node/pnpm | Node v24.22.3、pnpm 11.28.5（仅供参考仓库使用） |
 | 密钥 | `DEEPSEEK_API_KEY` 已配置于**用户环境变量**（不落盘、不入库）；当前 DSH 会话内需手动设置后才可见 |
-| 数据目录 | `~/.deepseekharness-go/`（config + sessions）；旧目录 `~/.deekseekharness-go/` 已在本机一次性迁移完毕，迁移逻辑见 [D-0005](decisions/D-0005-data-directory-rename.md) 与 [T-0006](tasks/T-0006-data-directory-rename.md) |
+| 数据目录 | `~/.deepseekharness-go/`（config + sessions）；旧目录 `~/.deekseekharness-go/` 已在本机一次性迁移完毕，迁移逻辑见 [D-0005](decisions/D-0005-data-directory-rename.md) 与 [T-0006](tasks/T-0006-data-directory-rename.md)。**不读上游 `DSH_HOME`**：安装版应用导出 `DSH_HOME=~/.dsh`，读它会让 Go 版加载另一个产品的 profiles（见 [T-0014](tasks/T-0014-profiles-and-dump-config.md)） |
 | 网络 | npmmirror / goproxy.cn 已配置；GitHub 直连不稳，必要时用 OpenSSL 后端与代理 |
 | 远端仓库 | `origin` → <https://github.com/Vicar-c/deepseekharness-go>（2026-11-16 由 `deekseekharness-go` 改名，模块路径同步改为 `github.com/Vicar-c/deepseekharness-go`）；**Git 不读 Windows 系统代理**。2026-11-21：本机代理未运行、直连可用，已移除仓库级 `http.proxy`；若直连再次失败，重新设置 `git config --local http.proxy http://127.0.0.1:7890` |
 | 提交身份 | `Vicar-c <244100401@qq.com>`（仓库级 `user.name`/`user.email` 固定，规则见 [D-0003](decisions/D-0003-commit-identity.md)） |
@@ -46,14 +46,22 @@
 - 流式（批次 3 第一步）：`llm.StreamingClient`（可选接口，不破坏 `Client`）+ DeepSeek SSE 解析与增量组装、`agent/stream` 瞬态事件、CLI 逐字输出（只打印一次）；真实 API 流式已验证。记录见 [T-0011](tasks/T-0011-streaming-llm-agent-cli.md)。
 - Web 流式（批次 3 收口）：`/api/chat` 按 `Accept: text/event-stream` 协商输出 SSE（`delta` / `done` / `error` 帧），前端 `fetch` + `ReadableStream` 逐字渲染；普通 JSON 调用保持兼容。记录见 [T-0012](tasks/T-0012-web-sse.md)。
 - 浏览器端 E2E：`scripts/webui-e2e.mjs` 用真实 headless Chrome（CDP，零 npm 依赖）驱动真实 `dsh web`，断言增量渲染（采样到 `web`→`web-`→`web-stream`）且无错误气泡；CI 新增 `webui` job（ubuntu + windows）。记录见 [T-0013](tasks/T-0013-browser-e2e.md)。
+- 配置来源（批次 4 基础）：`config.Config` 记录每个设置的来源（default / `file:` / `env:` / `flag:` / bundle / profile / home / `patch:`），新增 `MaxParallelToolCalls`（默认 10）与 `Set` 入口；本地 JSON 容忍 UTF-8 BOM。记录见 [T-0014](tasks/T-0014-profiles-and-dump-config.md)。
+- profiles 层叠（批次 4）：`internal/profiles` 实现 `bundle → profile patch → home patch → --patch`，`--profile` / `--patch` / `--dump-config` 上线；bundle 为 `base` / `web-app` / `headless`，profile 由内建名或 `<config dir>/profiles/<name>/package.json` 定义；传输门禁让 `dsh web --profile headless` 这类错误组合快速失败。记录见 [T-0014](tasks/T-0014-profiles-and-dump-config.md)。
+- 工具批次（批次 4）：`tool.ConcurrencySafe` 可选接口 + `Pipeline.ExecuteBatch`（并发上限、独占 barrier、模型序结果槽、取消语义），内置工具中仅只读的 6 个 opt-in；`agent.Loop` 先落全部 `tool/call` 再按模型序落 `tool/result`。记录见 [T-0015](tasks/T-0015-tool-batch.md)。
 
 ## 进行中
 
 - 发布、改名与数据目录整理已完成（[T-0005](tasks/T-0005-rename-and-hardening.md)、[T-0006](tasks/T-0006-data-directory-rename.md)）。
 - 批次 0+1 已完成（[T-0007](tasks/T-0007-batch0-1-tools.md)）：行尾规范 + 内置工具补齐。
 - **批次 2 已完成**（[T-0008](tasks/T-0008-session-v4-format-layer.md)、[T-0009](tasks/T-0009-session-v4-projection-and-writer.md)、[T-0010](tasks/T-0010-session-v4-wiring.md)）：会话以 v4 事件流落盘，CLI / Web / agent 全链路接通；真实 DeepSeek API 已验证（13 行日志，含 `tool/call` + `tool/result`）。
-- **批次 3 已完成**（[T-0011](tasks/T-0011-streaming-llm-agent-cli.md)、[T-0012](tasks/T-0012-web-sse.md)）：流式全链路 `llm.StreamingClient → agent/stream → CLI / Web SSE`，真实 API 与真实 `dsh web` 进程均已验证。
-- 下一步：批次 4（profiles + `--dump-config` + 工具批次语义），待用户指定或按序继续。
+- **批次 3 已完成**（[T-0011](tasks/T-0011-streaming-llm-agent-cli.md)、[T-0012](tasks/T-0012-web-sse.md)）：流式全链路 `llm.StreamingClient → agent/stream → CLI / Web SSE`，真实 API 与真实 `dsh web` 进程均已验证；[T-0013](tasks/T-0013-browser-e2e.md) 补上真实浏览器渲染断言。
+- **批次 4 已完成**（[T-0014](tasks/T-0014-profiles-and-dump-config.md)、[T-0015](tasks/T-0015-tool-batch.md)）：profiles 层叠 + `--dump-config` + `--patch`，以及工具批次并发 / barrier / 模型序。
+- 下一步候选（P1 剩余 + P2，需用户指定优先级）：
+  1. **resume 崩溃补齐**：`interruptedTurnClosers`（缺失工具结果 + `step/end` + `turn/end{interrupted}`），P1 验收标准 ②；
+  2. **`request/header` 可重建**：把请求信封快照写进会话日志，P1 验收标准中的"模型可见即已记录"完整性；
+  3. **并发会话压测**：`-race` 下 100 并发会话读写的 CI 用例（P1 验收标准 ③）；
+  4. **P2 起点**：`fs`/`shell`/`sandbox` seam 与 `workspace-write` 策略。
 
 ## 决策队列（与会话内表格同源）
 
@@ -151,6 +159,18 @@
 - 结果：`{"ok":true,"finalText":"web-stream","samples":["web","web-","web-stream"]}` —— **采样到中间态，证明逐字渲染**
 - 失败时会输出页面 DOM、浏览器异常/console、network 事件与服务端日志，便于 CI 定位
 - CI 新增 `webui` job（ubuntu + windows，使用 runner 预装 Chrome）
+
+### 批次 4：profiles 与工具批次（2026-11-21）
+
+- `gofmt -l .` clean；`go vet ./...` / `staticcheck ./...` → exit 0；`go test ./... -count=1` → **9 个包 ok、122 个用例**（profiles 新增 11、tool 新增 8、config 新增 5+4 子用例、agent 1、builtin 1）
+- `.\scripts\build.ps1` → `bin\dsh.exe`
+- `dsh tools` → 11 tools（默认 profile 行为不变）；`--patch` 禁用 shell → 10 tools
+- `dsh tools --dump-config` → 完整 JSON（profile/bundles/layers/plugins/config/sources），逐设置来源正确
+- 用户 profile（`profiles/mini` + home patch）→ 4 层 `layers`、`plugins=3`、来源逐项正确
+- 传输门禁：`dsh web --profile headless` / `dsh chat --profile web` → exit 1 + 明确错误
+- **真实 DeepSeek API（并发批次）**：一次回复 2 个 `read` 调用，日志 15 行，`tool/call`(seq 5,6) 全部早于 `tool/result`(seq 7,8)，结果按模型序，`turn/end kind=completed`
+- CI：新增 `go test -race`（仅 Linux）；本机无 gcc，`-race` 本地未跑（诚实记录）
+- 提交：`feat(config)` / `feat(tool)` / `feat(profiles)` / `chore(ci)` / `docs`；用户中文学习注释未入库
 
 ## 相关入口
 

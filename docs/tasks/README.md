@@ -27,6 +27,8 @@
 | [T-0011](T-0011-streaming-llm-agent-cli.md) | 批次 3 第一步：流式（LLM → agent → CLI） | done | 2026-11-21 | D-0002、D-0007 |
 | [T-0012](T-0012-web-sse.md) | 批次 3 收口：Web SSE | done | 2026-11-21 | D-0002、D-0007 |
 | [T-0013](T-0013-browser-e2e.md) | 浏览器端 E2E：Web UI 流式渲染 | done | 2026-11-21 | D-0002、D-0007 |
+| [T-0014](T-0014-profiles-and-dump-config.md) | 批次 4 第一步：profiles 层叠与 `--dump-config` | done | 2026-11-21 | D-0002、D-0007 |
+| [T-0015](T-0015-tool-batch.md) | 批次 4 第二步：工具批次语义（并发 / barrier / 模型序） | done | 2026-11-21 | D-0002、D-0007 |
 
 ## 新建任务步骤
 

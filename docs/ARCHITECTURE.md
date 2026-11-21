@@ -42,13 +42,14 @@ DeepSeek Harness（TS/Cordis）的能力，而不是一次性移植。
 | 包 | 职责 |
 |---|---|
 | `internal/kernel` | `Plugin` 生命周期（`Apply` → `Start` → `Stop` 逆序）、`Services` 类型化容器、`Events` 同步总线 |
-| `internal/llm` | `Client` 接口、消息/工具调用模型、DeepSeek 兼容 HTTP 客户端 |
-| `internal/tool` | `Tool` 接口、`Registry`、`Pipeline`（guard/超时/panic/截断/事件） |
-| `internal/builtin` | 内置插件：`read`、`write`、`list_dir`、`bash`/`pwsh`、`now` |
-| `internal/agent` | 单会话 agent loop，负责模型调用与工具结果回填 |
-| `internal/session` | 会话内存模型与追加式 JSONL 持久化 |
-| `internal/server` | 内嵌 Web UI + JSON API + 优雅退出 |
-| `internal/config` | JSON 配置 + 环境变量覆盖 + 默认值 |
+| `internal/profiles` | 启动组合：bundle → profile patch → home patch → `--patch` 层叠，`--dump-config` 输出每行/每设置的来源 |
+| `internal/llm` | `Client` 接口（可选 `StreamingClient`）、消息/工具调用模型、DeepSeek 兼容 HTTP + SSE 客户端 |
+| `internal/tool` | `Tool` 接口、`Registry`、`Pipeline`（guard/超时/panic/截断/事件）与批次调度（`ConcurrencySafe` + barrier + 模型序结果） |
+| `internal/builtin` | 内置插件：`read`、`write`、`list_dir`、`edit`、`glob`、`grep`、`read_image`、`bash`/`pwsh`、`now`、`todo_write`、`working_directory` |
+| `internal/agent` | 单会话 agent loop，负责模型调用、工具批次执行与结果按模型序回填 |
+| `internal/session` | 会话 v4 事件流（格式/投影/写入器/尾部修复）的内存模型与持久化 |
+| `internal/server` | 内嵌 Web UI + JSON/SSE API + 优雅退出 |
+| `internal/config` | JSON 配置 + 环境变量覆盖 + 设置来源追踪 |
 | `internal/version` | 构建期注入的版本信息 |
 
 ## 3. 插件内核
@@ -125,6 +126,17 @@ POST /api/chat {sessionId?, input}
 
 新增工具：实现 `tool.Tool`（`Definition` + `Execute`），在某个 `kernel.Plugin.Apply` 里 `registry.Register` 即可。
 
+### 批次执行（`Pipeline.ExecuteBatch`）
+
+一次模型回复里的多个工具调用按以下规则调度：
+
+1. 实现 `tool.ConcurrencySafe` 且返回 true 的调用进"安全段"，段内并发上限 = `config.maxParallelToolCalls`（默认 10，`1` = 串行）；
+2. 其余调用（未实现接口、返回 false、或名字未注册）各自独占，前后形成 barrier；
+3. 结果写入固定下标，**永远按模型给出的顺序**返回与落盘；
+4. ctx 取消后不再启动新调用，已启动的等待结束，未启动的返回 `isError` 结果（不中断 turn）。
+
+内置工具里只有只读的 `read`/`list_dir`/`glob`/`grep`/`read_image`/`now` opt-in；`agent.Loop` 先按模型序写全部 `tool/call`，再按模型序写 `tool/result`。
+
 ## 6. 事件目录
 
 | 事件 | 载荷 | 发布者 |
@@ -140,19 +152,25 @@ CLI 的 `[tool] write ok 0ms` 就是订阅 `tool/executed` 打印的。
 
 ## 7. 会话 JSONL 格式
 
-文件：`<sessionDir>/<id>.jsonl`，每行一个 JSON 对象：
+文件：`<sessionDir>/<id>.jsonl`，**DSH v4 事件流**（首行 header，其后每行一个事件，`seq` 从 0 连续递增）：
 
 ```jsonc
-{"type":"meta","time":"2026-11-16T14:07:22Z","id":"20261116-140722-330507f7","title":"CLI session","createdAt":"2026-11-16T14:07:22Z"}
-{"type":"message","time":"...","message":{"role":"user","content":"please write the file"}}
-{"type":"message","time":"...","message":{"role":"assistant","tool_calls":[{"id":"call-mock-1","type":"function","function":{"name":"write","arguments":"{\"path\":\"hello.txt\",\"content\":\"hi from mock\"}"}}]}}
-{"type":"message","time":"...","message":{"role":"tool","name":"write","tool_call_id":"call-mock-1","content":"wrote 12 bytes to hello.txt"}}
-{"type":"message","time":"...","message":{"role":"assistant","content":"MOCK-REPLY"}}
+{"type":"session","version":4,"id":"...","createdAt":1763...,"cwd":"...","isSeeded":false,"delegationDepth":0,"agentPreset":"default"}
+{"type":"turn/start","data":{"turn":1},"seq":1,"time":...}
+{"type":"user/message","data":{...},"surfaceOp":"append","seq":2,"time":...}
+{"type":"step/start","data":{"turn":1,"step":1},"seq":3,"time":...}
+{"type":"assistant/message","data":{"message":{...,"content":[{"type":"tool-call",...}]}},"surfaceOp":"append","seq":4,"time":...}
+{"type":"tool/call","data":{"callId":"...","name":"read","arguments":"{}"},"seq":5,"time":...}
+{"type":"tool/result","data":{"message":{...}},"surfaceOp":"append","seq":6,"time":...}
+{"type":"step/end","data":{...},"seq":7,"time":...}
+{"type":"turn/end","data":{"reason":{"kind":"completed"}},"seq":8,"time":...}
 ```
 
-- 追加写（append-only），加载时忽略未知 `type`（向前兼容）；
-- session id 只允许 `[A-Za-z0-9_-]+`，防止路径穿越；
-- 后续可与上游 `session-format-status`/`persistence-catalog` 对齐字段。
+- 只有 `system/message`、`developer/message`、`user/message`、`assistant/message`、`tool/result` 是 surface 事件（带 `surfaceOp`），其余是不进模型历史的记录事件；
+- 未知事件类型必须带 `ignorable:true`，否则读取端拒绝（前向兼容的安全阀）；
+- `Recording.Project()` 把 surface 事件投影成模型消息（含 `replace` 语义与工具名反查）；
+- 写入器保证原子创建、`seq` 续写、进程内单写者与崩溃尾部修复；
+- 细节与夹具出处见 [T-0008](tasks/T-0008-session-v4-format-layer.md)、[T-0009](tasks/T-0009-session-v4-projection-and-writer.md)、[T-0010](tasks/T-0010-session-v4-wiring.md)。
 
 ## 8. HTTP API
 
@@ -163,30 +181,32 @@ CLI 的 `[tool] write ok 0ms` 就是订阅 `tool/executed` 打印的。
 | `GET /api/sessions` | 会话摘要列表（按更新时间倒序） |
 | `POST /api/sessions` | `{title}` 创建会话 |
 | `GET /api/sessions/{id}` | 会话详情（含 messages） |
-| `POST /api/chat` | `{sessionId?, input}` → `{sessionId, reply}`；未配置 API key 返回 503 |
+| `POST /api/chat` | `{sessionId?, input}` → `{sessionId, reply}`；未配置 API key 返回 503；`Accept: text/event-stream` 时改为 SSE（`delta` / `done` / `error` 帧） |
 
-请求体上限 1 MiB、输入上限 64 KiB；所有 handler 有 panic 恢复。
+请求体上限 1 MiB、输入上限 64 KiB；所有 handler 有 panic 恢复。SSE 分支复用的是同一个处理器（Accept 协商，不新增路由），客户端断开时取消该轮 turn。
 
 ## 9. 与上游 Cordis 的映射与差距
 
 | 上游概念 | 本骨架的对应物 | 差距 |
 |---|---|---|
 | Cordis 插件 + 服务注入 | `kernel.Plugin` + `Services` | 无 scope 隔离、无声明式依赖、无热加载 |
+| Loader / profile 层叠 | `internal/profiles`（bundle → profile → home → `--patch`，`--dump-config` 报来源） | 只认 JSON patch，不认上游 `cordis.patch.yml`；无插件安装/市场 |
 | `ctx.tools` 注册表 | `tool.Registry` | 无按 Agent/Preset 的动态可见性 |
-| 工具执行管线 | `tool.Pipeline` | 无审批策略、沙箱策略、spill 存储 |
+| 工具执行管线 | `tool.Pipeline`（含批次并发 / barrier / 模型序） | 无审批策略、沙箱策略、spill 存储、per-tool 重试 |
 | Typert 声明生成 | 手写 `tool.Definition` | 无代码生成与类型校验 |
-| Session 持久化 | JSONL store | 未对齐上游字段/事件投影 |
-| Web/Desktop 前端 | 内嵌单页 | 仅最小 UI，无 RPC 协议与多会话界面 |
+| Session 持久化 | v4 事件流 + 投影 + 写入器 | 无跨进程单写者锁、无历史版本迁移链、无 projection 缓存 |
+| 流式 | `llm.StreamingClient` + `agent/stream` + Web SSE | `assistant/stream` 未落盘、无断线续传 |
+| Web/Desktop 前端 | 内嵌单页（fetch + ReadableStream） | 仅最小 UI，无 RPC 协议与多会话界面 |
 | 多 Agent/团队/工作流 | 无 | 未迁移 |
 
 迁移优先级与模块映射见 [MIGRATION_MAP.md](MIGRATION_MAP.md)。
 
 ## 10. 后续演进建议
 
-1. **P1.5**：补齐 `edit`/`apply_patch`/`glob`/`grep`/`todo_write` 等高频工具；工具输出 spill。
-2. **P2**：引入 `ctx.fs`、`ctx.shell` 等服务 seam，为沙箱策略（guard 链）与审批事件做铺垫。
+1. **P1 收尾**：resume 的 `interruptedTurnClosers`、`request/header` 可重建、`-race` 下并发会话压测。
+2. **P2**：引入 `ctx.fs`、`ctx.shell`、`ctx.sandbox` 等服务 seam，为沙箱策略（guard 链）与审批事件做铺垫；工具输出 spill。
 3. **P3**：MCP 客户端、LSP、Skill 目录、Subagent 子会话与 Team 任务板。
-4. **P4**：Web RPC/事件流（SSE）、多会话前端、Desktop 壳与插件市场。
+4. **P4**：Web RPC/事件流兼容层、多会话前端、Desktop 壳与插件市场。
 5. **持续**：对齐上游 session JSONL / 工具 schema，保证跨实现可复现与可迁移。
 
 ## 11. 安全边界（当前阶段）

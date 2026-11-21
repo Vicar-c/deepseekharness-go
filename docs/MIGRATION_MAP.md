@@ -123,7 +123,8 @@ deepseekharness-go/
 | Go 包 | 现状 | 覆盖的上游模块类型 | 优先级 |
 |---|---|---|---|
 | `internal/kernel` | 已实现：`App`/`Plugin`/`Starter`/`Stopper`/`Context`/`Services`/`Events` | `vendor/cordis`、`vendor/loader`、`vendor/include` 的概念子集 | P0 |
-| `internal/config` | 已实现：JSON 文件 + `DSH_*` 环境变量 + 默认值 | `dsh-settings` 的进程级子集、`dsh-home-paths` 的路径子集 | P0 |
+| `internal/config` | 已实现：JSON 文件 + `DSH_*` 环境变量 + 默认值 + **每个设置的来源追踪** | `dsh-settings` 的进程级子集、`dsh-home-paths` 的路径子集 | P0 |
+| `internal/profiles` | 已实现：bundle → profile patch → home patch → `--patch` 层叠、`--dump-config` 报来源 | `boot/app-boot`、`boot/cmdline`、`bundle/*` 的 P1 子集 | P1 |
 | `internal/llm` | 已实现：`Client`/`Request`/`Message`/`ToolDefinition` + `DeepSeek.Chat` | `llm/llm`、`llm/llm-deepseek` 的非流式子集 | P0 |
 | `internal/tool` | 已实现：`Tool`/`Registry`/`Pipeline`（guard、timeout、panic 恢复、截断、事件） | `core/tools` 的执行流水线子集 | P0 |
 | `internal/session` | 已实现：会话内存模型 + `Store`（`meta`/`message` 两行型 JSONL、ID 校验、列表投影） | `core/session` + `session/session-persistence-jsonl` + `session/session-format*` 的起点；**P1 需重写为 DSH v4 事件流** | P1 |
@@ -174,7 +175,7 @@ deepseekharness-go/
 | 29 | `preset`（3） | `agent-preset`、`agent-preset-registry`、`persona` | `internal/preset` | **P3** | 用普通 Cordis 配置声明 agent 能力；会话记录 `agentPreset`；persona 组合 |
 | 30 | `api`（9） | `gateway`、`remotes`、`remote-access`、`session-controller`、`settings-controller`、`workspace-controller`、`terminal-controller`、`job-controller`、`workspace-files` | `internal/api` + `internal/server` | **P3**（controller 子集）/ **P4**（Gateway 兼容） | Typert RPC 网关与各域控制器；`/api` FetchHandler + `/api/remote.mux` WS |
 | 31 | `typert`（4） | `protocol`、`generator`、`loader`、`registry` | **不迁移**；概念替换为 `internal/api` 的显式 handler + JSON Schema 常量 | **P4**（仅当需 wire 级兼容） | 装饰器 marker + 生成 `InvocationDescriptor`；Go 侧无等价反射管线 |
-| 32 | `boot`（6） | `app-boot`、`cmdline`、`config-editor`、`hmr`、`plugin-manager`、`plugin-market` | `internal/profiles`（app-boot/cmdline/config-editor）；pnpm 转发与市场留 P4 | **P1**（层叠与启动诊断）/ P4（HMR、plugin manager） | profile 解析、patch 层叠、应用参数边界、启动失败报告；HMR 依赖 N 个 watcher，Go 侧建议仅重启生效 |
+| 32 | `boot`（6） | `app-boot`、`cmdline`、`config-editor`、`hmr`、`plugin-manager`、`plugin-market` | `internal/profiles`（app-boot/cmdline/config-editor）；pnpm 转发与市场留 P4 | **P1 已完成**（层叠与启动诊断，[T-0014](tasks/T-0014-profiles-and-dump-config.md)）/ P4（HMR、plugin manager） | profile 解析、patch 层叠、应用参数边界、启动失败报告；HMR 依赖 N 个 watcher，Go 侧建议仅重启生效 |
 | 33 | `bundle`（6） | `base`、`web-app`、`headless`、`sdk-app`、`sdk-minimal`、`acp-app` | `internal/profiles/bundles.go`（内置 bundle 常量 + JSON patch） | **P1** | 可安装 patch 层；Go 侧把 6 个 bundle 固化为编译期组合，保留 patch 覆盖语义 |
 | 34 | `host`（11） | `webserver`、`frontend-static`、`authentication-token`、`authentication-desktop`、`directory-picker(-auto/-native/-browse)`、`open-in-app`、`plugin-inventory`、`product-telemetry-otel` | `internal/server`（webserver/frontend-static/auth）/ `internal/desktop`（picker/open-in-app） | **P1**（HTTP+静态）/ P4（其余） | 命名路由（exact→最长前缀→fallback）、upgrade 路由、index 注入、鉴权策略 required/anonymous/deny、TLS |
 | 35 | `acp`（1） | `acp` | `internal/acp` | **P4** | 仅自动化的 ACP stdio server：会话建/列/恢复/关闭、挂 MCP、模型选项、prompt/cancel |
@@ -288,7 +289,7 @@ deepseekharness-go/
 | 工具体 | 注册的 `execute()` | `Tool.Execute` | 同 |
 | 文件意图 | `fs/write-intent`、`fs/edit-intent`、`fs/delete-intent` | 缺 | P2 与 `internal/fs` 同步实现（先读后编辑策略依赖它） |
 | 内容投影 | `projectContent` → `tools/post-execute` → 规范化 → `finalizeContent` → `tools/result` | 仅 `clampOutput`（UTF-8 安全截断）+ 事件 | P2：post-execute 策略 + 结构化 error 身份；P2 起保留 `isError` |
-| 并发 | `isConcurrencySafe` + `maxParallelToolCalls`（默认 10，1=串行）+ 独占 barrier + 模型序结果 | 缺 | **P1/P2**：批次执行器（并发上限、barrier、按模型顺序回填） |
+| 并发 | `isConcurrencySafe` + `maxParallelToolCalls`（默认 10，1=串行）+ 独占 barrier + 模型序结果 | **已实现（P1）**：`tool.ConcurrencySafe` + `Pipeline.ExecuteBatch`，配置项 `maxParallelToolCalls` | P2 补 per-tool 超时/重试与资源级互斥；P2 再把执行器做成可替换 seam（[T-0015](tasks/T-0015-tool-batch.md)） |
 | PTC | `run_code` 保留传输 + 子调用 `tool/ptc-dispatch` | 不做 | P4 |
 
 ### 4.4 Agent loop 与 turn/step

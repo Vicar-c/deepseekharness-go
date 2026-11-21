@@ -59,13 +59,13 @@
 - **批次 2 已完成**（[T-0008](tasks/T-0008-session-v4-format-layer.md)、[T-0009](tasks/T-0009-session-v4-projection-and-writer.md)、[T-0010](tasks/T-0010-session-v4-wiring.md)）：会话以 v4 事件流落盘，CLI / Web / agent 全链路接通；真实 DeepSeek API 已验证（13 行日志，含 `tool/call` + `tool/result`）。
 - **批次 3 已完成**（[T-0011](tasks/T-0011-streaming-llm-agent-cli.md)、[T-0012](tasks/T-0012-web-sse.md)）：流式全链路 `llm.StreamingClient → agent/stream → CLI / Web SSE`，真实 API 与真实 `dsh web` 进程均已验证；[T-0013](tasks/T-0013-browser-e2e.md) 补上真实浏览器渲染断言。
 - **批次 4 已完成**（[T-0014](tasks/T-0014-profiles-and-dump-config.md)、[T-0015](tasks/T-0015-tool-batch.md)）：profiles 层叠 + `--dump-config` + `--patch`，以及工具批次并发 / barrier / 模型序。
-- 下一步候选（P1 剩余 + P2，需用户指定优先级）：
-  1. **resume 崩溃补齐**：`interruptedTurnClosers`（缺失工具结果 + `step/end` + `turn/end{interrupted}`），P1 验收标准 ②；
-  2. **`request/header` 可重建**：把请求信封快照写进会话日志，P1 验收标准中的"模型可见即已记录"完整性；
-  3. **并发会话压测**：`-race` 下 100 并发会话读写的 CI 用例（P1 验收标准 ③）；
-  4. **P2 起点**：`fs`/`shell`/`sandbox` seam 与 `workspace-write` 策略。
+- 待办与优先级：**唯一来源是 [docs/BACKLOG.md](BACKLOG.md)**（P0/P1/P2/P3 + 规模 + 依赖 + 验收要点 + 批次拆分）。下表只是摘要：
+  1. **P0**：B-01 崩溃恢复补齐（实测 400）、B-02 同会话互斥与 `Load` id 校验、B-03 BOM 容忍；
+  2. **P1 收口**：B-04 错误码、B-05 取消语义/信号、B-06 并发压测、B-07 请求信封、B-08 系统提示落盘、B-09 fsync/flush、B-10 跨进程锁；
+  3. **决策项**：B-11 zstd 读取（依赖）、B-12 Web 鉴权、B-13 P2 起点（沙箱 vs seam）；
+  4. **P2**：seam / 沙箱 / spill / 审批 / compaction / web 工具 / 错误分类 / `.env` 等。
 
-> 上述候选已在 [T-0016 差距审计](tasks/T-0016-gap-audit.md) 中重新盘点并排序（2026-11-21）：**P1 验收 ②③ 实测未达标**，另有请求信封/系统提示/fsync/跨进程锁/错误分类等缺口。下一批见决策 **Q-0011**。
+> 排序依据见 [T-0016 差距审计](tasks/T-0016-gap-audit.md)：**P1 验收 ②③ 实测未达标**。下一批建议 **批次 5（B-01 + B-02 + B-03，带 B-04/B-05）**，对应决策 **Q-0011**。
 
 ## 决策队列（与会话内表格同源）
 
@@ -84,7 +84,7 @@
 | Q-0008 | 是否补最小 CI（`.github/workflows/ci.yml`）？ | A. 补 / B. 暂不补 | A | **resolved**：已按 A 处理（[T-0005](tasks/T-0005-rename-and-hardening.md)） |
 | Q-0009 | 运行时数据目录是否从 `~/.deekseekharness-go/` 改名为 `~/.deepseekharness-go/`？ | A. 改名 + 一次性迁移 / B. 保持旧名 | A | **resolved**：已按 A 处理（[D-0005](decisions/D-0005-data-directory-rename.md)、[T-0006](tasks/T-0006-data-directory-rename.md)） |
 | Q-0010 | 批次 4 之后下一批做什么？ | A. P1 收尾 / B. 直接进 P2 / C. 其他 | A | **已被 Q-0011 取代**：用户要求先做完整差距审计 |
-| Q-0011 | 差距审计后先做哪一项？ | A. 按 [T-0016](tasks/T-0016-gap-audit.md) §4 顺序（resume → 请求信封 → 持久化硬化 → 错误分类/内核分发）/ B. 只做 resume 补齐 / C. 只做持久化硬化 / D. 直接进 P2 | A | 待决策 |
+| Q-0011 | 差距审计后先做哪一项？ | A. [BACKLOG](BACKLOG.md) 批次 5（P0：B-01 崩溃恢复 + B-02 互斥/id 校验 + B-03 BOM，带 B-04/B-05）/ B. 批次 5–8 一次授权全部 P1 收口 / C. 只做 B-01 / D. 直接进 P2 | A | 待决策 |
 
 ## 最近验证（2026-11-16）
 

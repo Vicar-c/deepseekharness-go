@@ -206,13 +206,14 @@ scripts/check_md_links.py Markdown 相对链接校验
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)：分层、插件生命周期、一次对话的时序、工具流水线与批次执行、会话 v4 格式、HTTP API、与上游的差距
 - [docs/MIGRATION_MAP.md](docs/MIGRATION_MAP.md)：上游 53 个模块组 → Go 包映射、迁移优先级（P0–P4）、兼容性与风险
+- [docs/BACKLOG.md](docs/BACKLOG.md)：待办与优先级（P0–P3、规模、依赖、验收要点、批次拆分）
 - [docs/tasks/T-0016-gap-audit.md](docs/tasks/T-0016-gap-audit.md)：P1 验收对照与当前缺口清单
 
 ## 与上游的差距（路线图摘要）
 
 已完成：P0 骨架 + P1 单 agent 闭环（v4 会话、流式、工具批次、profiles、CLI、最小 Web、浏览器 E2E）。
 **P1 剩余**：崩溃恢复补齐（`interruptedTurnClosers`）、`request/header` 与系统提示落盘、fsync/flush 屏障、跨进程单写者锁、LLM 错误分类、CLI 信号语义（详见 [T-0016](docs/tasks/T-0016-gap-audit.md)）。
-未迁移：沙箱三模式与 `fs`/`shell` seam（P2）、MCP/LSP/Skill/Subagent/Team（P3）、SDK/ACP/Workflow/Office/Desktop 与上游前端托管（P4）。
+未迁移：沙箱三模式与 `fs`/`shell` seam（P2）、MCP/LSP/Skill/Subagent/Team（P3）、SDK/ACP/Workflow/Office/Desktop 与上游前端托管（P4）。排期与验收要点见 [docs/BACKLOG.md](docs/BACKLOG.md)。
 
 ## 许可证
 

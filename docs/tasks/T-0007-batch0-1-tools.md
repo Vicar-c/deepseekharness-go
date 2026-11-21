@@ -35,6 +35,13 @@
 | `grep` 单测 | 大小写敏感/不敏感分别正确；无匹配返回 `no matches` |
 | `read_image` 单测 | 3x2 PNG 返回尺寸与 data URI；文本文件被拒 |
 | `todo_write` 单测 | 渲染 `[x]/[ ]/[~]`；清空；非法状态被拒 |
+| `staticcheck ./...` | 0 告警 |
+| `scripts/build.ps1` | 构建 `bin/dsh.exe`（7.9 MB），`dsh version` 正确注入 commit |
+| 工具目录完整性 | `TestEveryRegisteredToolIsWellFormed`：11 个工具、名称齐全、`Parameters` 均为合法 JSON、无重复注册 |
+| `working_directory` 对 shell 生效 | `TestShellToolFollowsWorkingDirectory`：切换到 `sub` 后 `pwd` / `Get-Location` 输出含 `sub` |
+| 边界用例 | `edit` 保留 0600 权限；`glob` 的 `path`/`limit`/跳过 `.git`；`grep` 的 `glob` 过滤、二进制跳过、`max_matches`；`read_image` 大图跳过内联、>8 MiB 拒绝 |
+| 流水线行为 | `TestBuiltinToolsBehaveThroughThePipeline`：输出被截断、缺文件与未知工具都转为 `IsError` 结果而非中断 |
+| 测试规模 | `internal/builtin` 17 个用例；全仓库 61 个用例 |
 
 ## 自动决策
 

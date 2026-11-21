@@ -91,7 +91,9 @@
 - `go test ./... -count=1` → 8 个包 ok（含 6 个新工具用例）
 - `go build ./cmd/dsh` → exit 0；`dsh tools` → **11 tools**、`plugins=4`
 - `.gitattributes`：索引本已是 LF，本次只改策略、无内容 diff
-- 提交：`c186947`（注释规则）、`8d0499b`（工具）；用户注释未入库
+- `staticcheck ./...` → 0 告警；`scripts/build.ps1` → `bin/dsh.exe`（commit 注入正确）
+- `internal/builtin` 17 个用例（含目录完整性、`working_directory` 对 shell 生效、边界与流水线行为）；全仓库 61 个用例
+- 提交：`c186947`（注释规则）、`8d0499b`（工具）、`e4dd2d1`（记录）、`test(builtin)`（补测）；用户注释未入库
 
 ## 相关入口
 

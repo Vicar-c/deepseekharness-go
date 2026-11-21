@@ -50,6 +50,17 @@ jobs:
       - name: go build
         run: go build ./cmd/dsh
 
+      # Documentation is part of the increment (AGENTS.md §1.14 / D-0008): broken
+      # relative links fail the build, and the README inventory is covered by
+      # `go test ./cmd/dsh` above.
+      - name: markdown links
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          if [ -f scripts/check_md_links.py ]; then
+            python3 scripts/check_md_links.py
+          fi
+
   webui:
     name: webui (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

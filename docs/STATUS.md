@@ -41,12 +41,13 @@
 - 数据目录：`~/.deepseekharness-go/` 落地，旧目录首次启动自动迁移（本机实测 2 个历史会话完整保留）；`--config` 帮助文本同步修正。记录见 [D-0005](decisions/D-0005-data-directory-rename.md) 与 [T-0006](tasks/T-0006-data-directory-rename.md)。
 - 工具面（批次 0+1）：`.gitattributes` 行尾规范；`builtin` 拆分为 6 个文件，新增 `edit`/`glob`/`grep`/`read_image`/`todo_write`/`working_directory`，文件与 shell 工具共享 `Workspace`，工具数 5 → **11**。记录见 [T-0007](tasks/T-0007-batch0-1-tools.md)。
 - v4 格式层（批次 2 第一步）：`internal/session/format.go` 可读取**真实上游 v4 会话**（seq 连续性校验、未知类型 `ignorable` 规则、`surfaceOp` 两种形态），编解码往返保真；夹具含出处。记录见 [T-0008](tasks/T-0008-session-v4-format-layer.md)。
+- v4 投影与写入器（批次 2 第二/三步）：`Recording.Project()` 把 surface 事件投影成 `[]llm.Message`（含 replace 语义、tool 名字反查），`Writer` 支持原子创建、seq 续写、进程内单写者、崩溃尾部修复。记录见 [T-0009](tasks/T-0009-session-v4-projection-and-writer.md)。
 
 ## 进行中
 
 - 发布、改名与数据目录整理已完成（[T-0005](tasks/T-0005-rename-and-hardening.md)、[T-0006](tasks/T-0006-data-directory-rename.md)）。
 - 批次 0+1 已完成（[T-0007](tasks/T-0007-batch0-1-tools.md)）：行尾规范 + 内置工具补齐。
-- **批次 2 进行中**（用户"开始吧"授权）：第一步 v4 格式类型层完成（[T-0008](tasks/T-0008-session-v4-format-layer.md)，可读真实上游样本、往返保真）；下一步 = 投影层 → 持久化写入器 → 接入 `agent.Loop`。
+- **批次 2 进行中**（用户"开始吧/继续"授权）：格式层（[T-0008](tasks/T-0008-session-v4-format-layer.md)）、投影层与写入器（[T-0009](tasks/T-0009-session-v4-projection-and-writer.md)）已完成——能读真实上游 v4、能投影出模型消息、能安全追加并修复崩溃尾部；**剩最后一步：接入 `Store` 与 `agent.Loop`**。
 
 ## 决策队列（与会话内表格同源）
 
@@ -106,6 +107,15 @@
 - `gofmt` clean / `go vet` 0 / `staticcheck` 0；`go test ./...` 8 包全绿
 - 用例：session 包 13 个（新增 8）、全仓库 71 个
 - 本步不改生产行为：`Store`/`Entry` 与 `agent.Loop` 未接线，可整体回滚
+
+### 批次 2 第二/三步：投影与写入器（2026-11-21）
+
+- 真实样本投影 **16 条消息**（= 16 个 surface 事件）；assistant 的 2 个 tool calls、tool 消息的 name 由 `tool/call` 反查均正确
+- `surfaceOp` replace：表面替换成功；越界范围报错
+- 写入器：原子创建 header、重新打开后 seq 续写、进程内第二写者被拒（Close 后可重开）
+- 尾部修复：半行 JSON 与"以换行结尾但解析失败"的行都被截断；二次修复为 no-op
+- session 包 26 个用例、全仓库 84 个；`gofmt`/`vet`/`staticcheck`/`go test` 全绿
+- 仍未接线：`Store`、`agent.Loop`、CLI/Web 行为不变
 
 ## 相关入口
 

@@ -452,6 +452,7 @@ Go 侧关键不变量（迁移验收点）：**模型可见即已记录**；取�
 | 目标 | "一个 cwd 内、一个模型、一组内置工具"的完整可用闭环，会话可持久化并 resume |
 | 范围 | §4.4 的 turn/step 全流程；`session` 的 v4 JSONL（`compression:none` 或 `zstd`）+ 单写者锁 + 崩溃尾部修复；`request/header` 可重建；`llm.Stream` 流式 + tool calls；工具批次（串行优先）；`system` 提示组装（静态）；`profiles`（默认 profile + patch 覆盖 + `--dump-config`）；Web：会话列表/读取/`/api/chat`（SSE）；`builtin`：`read/write/edit/read_image/glob/grep`、`bash`、`pwsh`、`todo_write`、`working_directory` |
 | 验收标准 | ① 录制一段真实会话并与上游 JSONL 逐事件比对（字段/seq/surfaceOp 一致）；② 杀掉进程后 resume，补齐 `interruptedTurnClosers` 且日志不丢已提交前缀；③ `-race` 下 100 并发会话读写无数据竞争；④ 会话文件可与上游 `session-version 4` 读取器互开（只读方向）；⑤ 工具超时/截断/错误以 `isError` 结果回填而非中断循环 |
+| 达标情况（2026-11-21 审计） | ⑤ 达标；①④ 单向达标（读了上游样本，反向未验）；**②③ 未达标**（resume 实测被真实 API 以 400 拒绝；无并发用例）。逐条证据与缺口清单见 [T-0016](tasks/T-0016-gap-audit.md) |
 | 风险 | 流式事件与持久 settle 的边界（`agent/assistant-stream` 是瞬态，`assistant/message` 才持久）；写路径批量/flush 语义若做错会导致崩溃丢事件 |
 
 ### P2 工具生态与沙箱（对齐 `dsh-base` 能力面）

@@ -49,6 +49,7 @@
 - 配置来源（批次 4 基础）：`config.Config` 记录每个设置的来源（default / `file:` / `env:` / `flag:` / bundle / profile / home / `patch:`），新增 `MaxParallelToolCalls`（默认 10）与 `Set` 入口；本地 JSON 容忍 UTF-8 BOM。记录见 [T-0014](tasks/T-0014-profiles-and-dump-config.md)。
 - profiles 层叠（批次 4）：`internal/profiles` 实现 `bundle → profile patch → home patch → --patch`，`--profile` / `--patch` / `--dump-config` 上线；bundle 为 `base` / `web-app` / `headless`，profile 由内建名或 `<config dir>/profiles/<name>/package.json` 定义；传输门禁让 `dsh web --profile headless` 这类错误组合快速失败。记录见 [T-0014](tasks/T-0014-profiles-and-dump-config.md)。
 - 工具批次（批次 4）：`tool.ConcurrencySafe` 可选接口 + `Pipeline.ExecuteBatch`（并发上限、独占 barrier、模型序结果槽、取消语义），内置工具中仅只读的 6 个 opt-in；`agent.Loop` 先落全部 `tool/call` 再按模型序落 `tool/result`。记录见 [T-0015](tasks/T-0015-tool-batch.md)。
+- 差距审计（2026-11-21）：重读全部代码与文档，对照 P1 范围/验收与 §6 兼容性条目，实跑 CLI 与真实 API 复现崩溃恢复；**P1 验收 ②（resume 补齐）与 ③（并发会话压测）实测未达标**，另有请求信封、系统提示落盘、fsync 屏障、跨进程锁、LLM 错误分类等缺口。记录见 [T-0016](tasks/T-0016-gap-audit.md)。
 
 ## 进行中
 
@@ -62,6 +63,8 @@
   2. **`request/header` 可重建**：把请求信封快照写进会话日志，P1 验收标准中的"模型可见即已记录"完整性；
   3. **并发会话压测**：`-race` 下 100 并发会话读写的 CI 用例（P1 验收标准 ③）；
   4. **P2 起点**：`fs`/`shell`/`sandbox` seam 与 `workspace-write` 策略。
+
+> 上述候选已在 [T-0016 差距审计](tasks/T-0016-gap-audit.md) 中重新盘点并排序（2026-11-21）：**P1 验收 ②③ 实测未达标**，另有请求信封/系统提示/fsync/跨进程锁/错误分类等缺口。下一批见决策 **Q-0011**。
 
 ## 决策队列（与会话内表格同源）
 
@@ -79,6 +82,8 @@
 | Q-0007 | 公开仓库中文档里的本机绝对路径是否替换？ | A. 替换为可移植写法 / B. 保持现状 | A | **resolved**：已按 A 处理（[T-0005](tasks/T-0005-rename-and-hardening.md)） |
 | Q-0008 | 是否补最小 CI（`.github/workflows/ci.yml`）？ | A. 补 / B. 暂不补 | A | **resolved**：已按 A 处理（[T-0005](tasks/T-0005-rename-and-hardening.md)） |
 | Q-0009 | 运行时数据目录是否从 `~/.deekseekharness-go/` 改名为 `~/.deepseekharness-go/`？ | A. 改名 + 一次性迁移 / B. 保持旧名 | A | **resolved**：已按 A 处理（[D-0005](decisions/D-0005-data-directory-rename.md)、[T-0006](tasks/T-0006-data-directory-rename.md)） |
+| Q-0010 | 批次 4 之后下一批做什么？ | A. P1 收尾 / B. 直接进 P2 / C. 其他 | A | **已被 Q-0011 取代**：用户要求先做完整差距审计 |
+| Q-0011 | 差距审计后先做哪一项？ | A. 按 [T-0016](tasks/T-0016-gap-audit.md) §4 顺序（resume → 请求信封 → 持久化硬化 → 错误分类/内核分发）/ B. 只做 resume 补齐 / C. 只做持久化硬化 / D. 直接进 P2 | A | 待决策 |
 
 ## 最近验证（2026-11-16）
 
@@ -171,6 +176,14 @@
 - **真实 DeepSeek API（并发批次）**：一次回复 2 个 `read` 调用，日志 15 行，`tool/call`(seq 5,6) 全部早于 `tool/result`(seq 7,8)，结果按模型序，`turn/end kind=completed`
 - CI：新增 `go test -race`（仅 Linux）；本机无 gcc，`-race` 本地未跑（诚实记录）
 - 提交：`feat(config)` / `feat(tool)` / `feat(profiles)` / `chore(ci)` / `docs`；用户中文学习注释未入库
+
+### 差距审计（2026-11-21）
+
+- 盘面：51 个 .go 文件 / 8,844 行；122 个用例；覆盖率 65.3%（config）–83.5%（kernel），`cmd/dsh` 0%
+- **实测未达标 ①**：把真实会话截断到 `tool/call` 后 resume → DeepSeek **HTTP 400**（assistant `tool_calls` 未配对），日志里没有补任何 `tool/result` / `step/end` / `turn/end{interrupted}`
+- **实测未达标 ②**：无并发会话用例（P1 验收 ③ 无网）
+- **实测缺陷**：会话日志不容忍 BOM；`Store.Load` 相信 header id（改名文件 → 指向旧文件名报错）
+- 静态核对缺口：`request/header`、`request/context`、`system/message` 从未写入；无 fsync 屏障；写者锁仅进程内；内核只有 `Emit`；LLM 无错误分类；CLI 无 SIGINT 130/启动诊断；Web 无鉴权；README 陈旧；CI 缺 staticcheck 与 md 链接检查
 
 ## 相关入口
 

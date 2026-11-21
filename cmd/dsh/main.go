@@ -327,6 +327,18 @@ func runChat(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "[tool] %s %s %dms\n", payload.Call.Name, outcome, payload.Duration)
 	})
 
+	// Streaming deltas arrive as transient agent/stream events; the complete
+	// assistant message is still persisted to the session log once.
+	var streamed bool
+	rt.app.Events().On(agent.EventAgentStream, func(event kernel.Event) {
+		payload, ok := event.Payload.(agent.StreamEvent)
+		if !ok || payload.Content == "" {
+			return
+		}
+		streamed = true
+		fmt.Fprint(stdout, payload.Content)
+	})
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -336,7 +348,11 @@ func runChat(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "dsh: %v\n", err)
 			return 1
 		}
-		fmt.Fprintln(stdout, reply)
+		if streamed {
+			fmt.Fprintln(stdout)
+		} else {
+			fmt.Fprintln(stdout, reply)
+		}
 		return 0
 	}
 
@@ -360,7 +376,12 @@ func runChat(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "dsh: %v\n", err)
 			continue
 		}
-		fmt.Fprintf(stdout, "\ndsh> %s\n\n", reply)
+		if streamed {
+			fmt.Fprint(stdout, "\n\n")
+		} else {
+			fmt.Fprintf(stdout, "\ndsh> %s\n\n", reply)
+		}
+		streamed = false
 	}
 	if err := scanner.Err(); err != nil {
 		fmt.Fprintf(stderr, "dsh: read input: %v\n", err)

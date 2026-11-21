@@ -21,6 +21,7 @@ import (
 const (
 	EventAgentStarted  = "agent/started"
 	EventAgentStep     = "agent/step"
+	EventAgentStream   = "agent/stream"
 	EventAgentFinished = "agent/finished"
 )
 
@@ -47,6 +48,18 @@ type Options struct {
 type StepEvent struct {
 	Iteration int
 	ToolCalls int
+}
+
+// StreamEvent is the "agent/stream" payload: one incremental delta of the model
+// response. These events are transient (they are not persisted); the complete
+// message is persisted once the call finishes.
+type StreamEvent struct {
+	SessionID    string
+	Content      string
+	ToolCallID   string
+	ToolName     string
+	ToolArgs     string
+	FinishReason string
 }
 
 // FinishedEvent is the "agent/finished" payload.
@@ -121,7 +134,7 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 			Messages: l.messages(),
 			Tools:    l.definitions,
 		}
-		response, err := l.opts.Client.Chat(ctx, request)
+		response, err := l.chat(ctx, request)
 		if err != nil {
 			lastErr = fmt.Errorf("agent: model call: %w", err)
 			break
@@ -201,6 +214,31 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 
 // Session exposes the conversation this loop writes to.
 func (l *Loop) Session() *session.Session { return l.opts.Session }
+
+// chat calls the model, streaming deltas to the event bus when the client
+// supports it and falling back to one blocking call otherwise. Both paths
+// return the same fully assembled response.
+func (l *Loop) chat(ctx context.Context, request llm.Request) (llm.Response, error) {
+	streaming, ok := l.opts.Client.(llm.StreamingClient)
+	if !ok {
+		return l.opts.Client.Chat(ctx, request)
+	}
+	return streaming.ChatStream(ctx, request, func(chunk llm.Chunk) error {
+		if chunk.Content == "" && chunk.ToolCallID == "" && chunk.ToolName == "" &&
+			chunk.ToolArgs == "" && chunk.FinishReason == "" {
+			return nil
+		}
+		l.emit(EventAgentStream, StreamEvent{
+			SessionID:    l.opts.Session.ID,
+			Content:      chunk.Content,
+			ToolCallID:   chunk.ToolCallID,
+			ToolName:     chunk.ToolName,
+			ToolArgs:     chunk.ToolArgs,
+			FinishReason: chunk.FinishReason,
+		})
+		return nil
+	})
+}
 
 // record persists one log-only event. Without a store the loop stays in memory.
 func (l *Loop) record(eventType string, data any) error {

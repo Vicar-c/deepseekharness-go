@@ -85,6 +85,30 @@ type Client interface {
 	Chat(ctx context.Context, request Request) (Response, error)
 }
 
+// Chunk is one incremental piece of a streamed completion. Exactly one field is
+// meaningful per chunk: text content, a tool-call delta, or the finish reason.
+type Chunk struct {
+	// Content is an incremental piece of assistant text.
+	Content string
+	// ToolCallID is set on the first delta of a tool call.
+	ToolCallID string
+	// ToolName is set on the delta that names the function.
+	ToolName string
+	// ToolArgs is an incremental piece of the JSON arguments.
+	ToolArgs string
+	// FinishReason is set on the last chunk when the provider reports it.
+	FinishReason string
+}
+
+// StreamingClient is an optional extension of Client. Callers that want
+// incremental output type-assert their Client to it and fall back to Chat when
+// the concrete client does not implement it. The returned Response is the fully
+// assembled completion, identical to what Chat would have returned.
+type StreamingClient interface {
+	Client
+	ChatStream(ctx context.Context, request Request, onChunk func(Chunk) error) (Response, error)
+}
+
 // TextMessage builds a plain text message.
 func TextMessage(role Role, text string) Message {
 	return Message{Role: role, Content: text}

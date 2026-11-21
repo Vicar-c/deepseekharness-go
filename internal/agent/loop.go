@@ -98,14 +98,24 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 		return "", errors.New("agent: empty input")
 	}
 	started := time.Now()
+	turn := l.opts.Session.Turn + 1
+	l.opts.Session.Turn = turn
 	l.emit(EventAgentStarted, map[string]any{"sessionId": l.opts.Session.ID, "input": input})
 
-	if err := l.append(ctx, llm.TextMessage(llm.RoleUser, input)); err != nil {
+	if err := l.record("turn/start", session.TurnMarker{Turn: turn}); err != nil {
+		return "", err
+	}
+	if err := l.appendSurface("user/message", session.NewUserMessage(input), llm.TextMessage(llm.RoleUser, input)); err != nil {
 		return "", err
 	}
 
+	openStep := 0
 	var lastErr error
 	for iteration := 1; iteration <= l.opts.MaxIterations; iteration++ {
+		if err := l.record("step/start", session.StepMarker{Turn: turn, Step: iteration}); err != nil {
+			return "", err
+		}
+		openStep = iteration
 		request := llm.Request{
 			Model:    l.opts.Model,
 			Messages: l.messages(),
@@ -116,10 +126,23 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 			lastErr = fmt.Errorf("agent: model call: %w", err)
 			break
 		}
-		if err := l.append(ctx, response.Message); err != nil {
+		assistant := session.AssistantMessageData{
+			Turn:    turn,
+			Step:    iteration,
+			Message: session.NewAssistantMessage(response.Message),
+			Stream:  []any{},
+		}
+		if err := l.appendSurface("assistant/message", assistant, response.Message); err != nil {
 			return "", err
 		}
 		if len(response.Message.ToolCalls) == 0 {
+			if err := l.closeStep(turn, iteration); err != nil {
+				return "", err
+			}
+			openStep = 0
+			if err := l.closeTurn(turn, "completed"); err != nil {
+				return "", err
+			}
 			l.emit(EventAgentFinished, FinishedEvent{
 				SessionID:  l.opts.Session.ID,
 				Iterations: iteration,
@@ -128,20 +151,44 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 			return response.Message.Content, nil
 		}
 		for _, call := range response.Message.ToolCalls {
-			result := l.opts.Pipeline.Execute(ctx, tool.Call{
-				ID:        call.ID,
+			arguments := normalizeArguments(call.Function.Arguments)
+			toolCall := session.ToolCallData{
+				Turn:      turn,
+				Step:      iteration,
+				CallID:    call.ID,
 				Name:      call.Function.Name,
-				Arguments: normalizeArguments(call.Function.Arguments),
-			})
+				Arguments: string(arguments),
+			}
+			if err := l.record("tool/call", toolCall); err != nil {
+				return "", err
+			}
+			result := l.opts.Pipeline.Execute(ctx, tool.Call{ID: call.ID, Name: call.Function.Name, Arguments: arguments})
 			message := llm.ToolResultMessage(call.ID, call.Function.Name, result.Content)
-			if err := l.append(ctx, message); err != nil {
+			data := session.ToolResultData{
+				Turn:    turn,
+				Step:    iteration,
+				Message: session.NewToolResultMessage(call.ID, result.Content, result.IsError),
+			}
+			if err := l.appendSurface("tool/result", data, message); err != nil {
 				return "", err
 			}
 		}
+		if err := l.closeStep(turn, iteration); err != nil {
+			return "", err
+		}
+		openStep = 0
 		l.emit(EventAgentStep, StepEvent{Iteration: iteration, ToolCalls: len(response.Message.ToolCalls)})
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("agent: exceeded %d iterations without a final answer", l.opts.MaxIterations)
+	}
+	if openStep != 0 {
+		if err := l.closeStep(turn, openStep); err != nil {
+			lastErr = errors.Join(lastErr, err)
+		}
+	}
+	if err := l.closeTurn(turn, "error"); err != nil {
+		lastErr = errors.Join(lastErr, err)
 	}
 	l.emit(EventAgentFinished, FinishedEvent{
 		SessionID:  l.opts.Session.ID,
@@ -155,15 +202,36 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 // Session exposes the conversation this loop writes to.
 func (l *Loop) Session() *session.Session { return l.opts.Session }
 
-func (l *Loop) append(ctx context.Context, message llm.Message) error {
-	if l.opts.Store != nil {
-		if err := l.opts.Store.Append(l.opts.Session, message); err != nil {
-			return fmt.Errorf("agent: persist message: %w", err)
-		}
+// record persists one log-only event. Without a store the loop stays in memory.
+func (l *Loop) record(eventType string, data any) error {
+	if l.opts.Store == nil {
 		return nil
+	}
+	if err := l.opts.Store.AppendEvent(l.opts.Session, eventType, data, nil, nil); err != nil {
+		return fmt.Errorf("agent: persist %s: %w", eventType, err)
+	}
+	return nil
+}
+
+// appendSurface persists a surface event and mirrors it into the in-memory
+// message list that feeds the next request.
+func (l *Loop) appendSurface(eventType string, data any, message llm.Message) error {
+	if l.opts.Store != nil {
+		op := session.Append
+		if err := l.opts.Store.AppendEvent(l.opts.Session, eventType, data, &op, nil); err != nil {
+			return fmt.Errorf("agent: persist %s: %w", eventType, err)
+		}
 	}
 	l.opts.Session.Messages = append(l.opts.Session.Messages, message)
 	return nil
+}
+
+func (l *Loop) closeStep(turn, step int) error {
+	return l.record("step/end", session.StepMarker{Turn: turn, Step: step})
+}
+
+func (l *Loop) closeTurn(turn int, kind string) error {
+	return l.record("turn/end", session.TurnEndData{Turn: turn, Reason: session.TurnEndReason{Kind: kind}})
 }
 
 func (l *Loop) messages() []llm.Message {

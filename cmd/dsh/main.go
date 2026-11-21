@@ -151,6 +151,7 @@ func bootstrap(cfg config.Config, logger *slog.Logger) (*runtime, error) {
 		MaxOutputBytes: cfg.MaxToolOutputBytes,
 	})
 	store := session.NewStore(cfg.SessionDir)
+	store.SetWorkspace(cfg.Workspace)
 	kernel.Provide(app.Services(), cfg)
 	kernel.Provide(app.Services(), registry)
 	kernel.Provide(app.Services(), pipeline)
@@ -180,6 +181,7 @@ func (r *runtime) close() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = r.app.Shutdown(ctx)
+	_ = r.store.Close()
 }
 
 func (r *runtime) newClient() (llm.Client, error) {

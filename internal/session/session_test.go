@@ -14,6 +14,7 @@ import (
 func TestStoreCreateAppendLoad(t *testing.T) {
 	dir := t.TempDir()
 	store := session.NewStore(dir)
+	t.Cleanup(func() { _ = store.Close() })
 
 	sess, err := store.Create("demo session")
 	if err != nil {
@@ -47,13 +48,14 @@ func TestStoreCreateAppendLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read jsonl: %v", err)
 	}
-	if lines := strings.Count(string(raw), "\n"); lines != 3 {
-		t.Fatalf("jsonl lines = %d, want 3 (meta + 2 messages)", lines)
+	if lines := strings.Count(string(raw), "\n"); lines != 4 {
+		t.Fatalf("jsonl lines = %d, want 4 (header + title + 2 events)", lines)
 	}
 }
 
 func TestStoreListNewestFirst(t *testing.T) {
 	store := session.NewStore(t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
 	first, err := store.Create("first")
 	if err != nil {
 		t.Fatal(err)
@@ -77,6 +79,7 @@ func TestStoreListNewestFirst(t *testing.T) {
 
 func TestStoreRejectsInvalidIDs(t *testing.T) {
 	store := session.NewStore(t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
 	if _, err := store.Load("../escape"); err == nil {
 		t.Fatal("expected error for path traversal id")
 	}
@@ -92,6 +95,7 @@ func TestStoreRejectsInvalidIDs(t *testing.T) {
 
 func TestStoreLoadMissingSession(t *testing.T) {
 	store := session.NewStore(t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
 	if _, err := store.Load("does-not-exist"); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("error = %v", err)
 	}
@@ -99,6 +103,7 @@ func TestStoreLoadMissingSession(t *testing.T) {
 
 func TestStoreTruncatesLongTitle(t *testing.T) {
 	store := session.NewStore(t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
 	long := strings.Repeat("x", 300)
 	sess, err := store.Create(long)
 	if err != nil {

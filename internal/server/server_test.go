@@ -37,6 +37,7 @@ func newServerWithStore(t *testing.T, store *session.Store, runner server.ChatRu
 func newTestServer(t *testing.T, runner server.ChatRunner) (*httptest.Server, *session.Store) {
 	t.Helper()
 	store := session.NewStore(t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
 	return newServerWithStore(t, store, runner), store
 }
 
@@ -115,6 +116,7 @@ func TestChatWithoutRunnerReturns503(t *testing.T) {
 
 func TestChatWithRunnerPersistsMessages(t *testing.T) {
 	store := session.NewStore(t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
 	runner := func(_ context.Context, sess *session.Session, input string) (string, error) {
 		if err := store.Append(sess, llm.TextMessage(llm.RoleUser, input)); err != nil {
 			return "", err

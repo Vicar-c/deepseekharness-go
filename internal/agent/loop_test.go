@@ -55,6 +55,7 @@ func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard,
 func buildLoop(t *testing.T, client llm.Client, registry *tool.Registry, events *kernel.Events, maxIterations int) (*agent.Loop, *session.Session, *session.Store) {
 	t.Helper()
 	store := session.NewStore(t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
 	sess, err := store.Create("agent test")
 	if err != nil {
 		t.Fatalf("create session: %v", err)

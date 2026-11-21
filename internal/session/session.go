@@ -1,10 +1,11 @@
-// Package session stores conversations as append-only JSONL files, mirroring
-// the persistence model of the upstream DSH JSONL session format closely enough
-// for future migration tooling.
+// Package session stores conversations as append-only JSONL files in the DSH v4
+// session format: one header line followed by sequenced events. The wire format
+// lives in format.go, the event-to-message projection in projection.go and the
+// writer in persist_jsonl.go; this file is the store the CLI, the web server and
+// the agent loop share.
 package session
 
 import (
-	"bufio"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -21,22 +22,6 @@ import (
 	"github.com/Vicar-c/deepseekharness-go/internal/llm"
 )
 
-// Entry types persisted in one session JSONL file.
-const (
-	EntryMeta    = "meta"
-	EntryMessage = "message"
-)
-
-// Entry is one JSONL line of a session file.
-type Entry struct {
-	Type      string       `json:"type"`
-	Time      time.Time    `json:"time"`
-	ID        string       `json:"id,omitempty"`
-	Title     string       `json:"title,omitempty"`
-	CreatedAt *time.Time   `json:"createdAt,omitempty"`
-	Message   *llm.Message `json:"message,omitempty"`
-}
-
 // Summary is the list projection of one session.
 type Summary struct {
 	ID        string    `json:"id"`
@@ -46,12 +31,14 @@ type Summary struct {
 	Messages  int       `json:"messages"`
 }
 
-// Session is one conversation held in memory.
+// Session is one conversation held in memory. Messages is the projection of the
+// persisted event log; Turn is the last turn number seen.
 type Session struct {
 	ID        string
 	Title     string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	Turn      int
 	Messages  []llm.Message
 }
 
@@ -62,19 +49,49 @@ func (s *Session) Summary() Summary {
 
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
-// Store persists sessions under one directory.
+// Store persists sessions as v4 JSONL files under one directory.
 type Store struct {
-	dir string
-	mu  sync.Mutex
+	dir       string
+	workspace string
+	mu        sync.Mutex
+	writers   map[string]*Writer
 }
 
 // NewStore creates a store rooted at dir. The directory is created lazily.
-func NewStore(dir string) *Store { return &Store{dir: dir} }
+func NewStore(dir string) *Store {
+	return &Store{dir: dir, writers: make(map[string]*Writer)}
+}
 
 // Dir reports the session directory.
 func (s *Store) Dir() string { return s.dir }
 
-// Create writes a new session file and returns the in-memory session.
+// SetWorkspace records the workspace path stamped into new session headers.
+func (s *Store) SetWorkspace(path string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.workspace = path
+}
+
+// Close closes every writer held by the store.
+func (s *Store) Close() error {
+	s.mu.Lock()
+	writers := make([]*Writer, 0, len(s.writers))
+	for id, writer := range s.writers {
+		writers = append(writers, writer)
+		delete(s.writers, id)
+	}
+	s.mu.Unlock()
+	var errs []error
+	for _, writer := range writers {
+		errs = append(errs, writer.Close())
+	}
+	return errors.Join(errs...)
+}
+
+func (s *Store) path(id string) string { return filepath.Join(s.dir, id+".jsonl") }
+
+// Create writes a new v4 session file (header plus a session/title event) and
+// returns the in-memory session.
 func (s *Store) Create(title string) (*Session, error) {
 	title = strings.TrimSpace(title)
 	if title == "" {
@@ -84,110 +101,137 @@ func (s *Store) Create(title string) (*Session, error) {
 		title = title[:120]
 	}
 	now := time.Now().UTC()
-	sess := &Session{
-		ID:        newID(now),
-		Title:     title,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
+	sess := &Session{ID: newID(now), Title: title, CreatedAt: now, UpdatedAt: now}
+
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := os.MkdirAll(s.dir, 0o755); err != nil {
-		return nil, fmt.Errorf("session: create directory: %w", err)
+	workspace := s.workspace
+	s.mu.Unlock()
+	zero := 0
+	header := Header{
+		ID:              sess.ID,
+		CreatedAt:       now.UnixMilli(),
+		Cwd:             workspace,
+		IsSeeded:        false,
+		DelegationDepth: &zero,
 	}
-	entry := Entry{Type: EntryMeta, Time: now, ID: sess.ID, Title: sess.Title, CreatedAt: &sess.CreatedAt}
-	if err := s.appendEntryLocked(sess.ID, entry); err != nil {
+	writer, err := CreateSessionFile(s.path(sess.ID), header)
+	if err != nil {
 		return nil, err
 	}
+	titleData := map[string]any{"title": title, "messageSeqs": []int64{}, "source": map[string]string{"kind": "user"}}
+	if _, err := writer.Append("session/title", titleData); err != nil {
+		_ = writer.Close()
+		return nil, err
+	}
+	s.mu.Lock()
+	s.writers[sess.ID] = writer
+	s.mu.Unlock()
 	return sess, nil
 }
 
-// Append appends one message to the session file and to the in-memory view.
-func (s *Store) Append(sess *Session, message llm.Message) error {
+func (s *Store) writerFor(id string) (*Writer, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if writer, ok := s.writers[id]; ok {
+		return writer, nil
+	}
+	writer, err := OpenWriter(s.path(id))
+	if err != nil {
+		return nil, err
+	}
+	s.writers[id] = writer
+	return writer, nil
+}
+
+// AppendEvent records one v4 event in the session log. The in-memory message
+// list is not touched: callers that keep a Session in memory update it
+// themselves. A nil surfaceOp means the event is log-only.
+func (s *Store) AppendEvent(sess *Session, eventType string, data any, surfaceOp *SurfaceOp, sources []int64) error {
 	if sess == nil {
 		return errors.New("session: nil session")
 	}
-	now := time.Now().UTC()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.appendEntryLocked(sess.ID, Entry{Type: EntryMessage, Time: now, Message: &message}); err != nil {
+	if !idPattern.MatchString(sess.ID) {
+		return fmt.Errorf("session: invalid id %q", sess.ID)
+	}
+	writer, err := s.writerFor(sess.ID)
+	if err != nil {
 		return err
 	}
+	event, err := writer.AppendEvent(eventType, data, surfaceOp, sources)
+	if err != nil {
+		return err
+	}
+	sess.UpdatedAt = event.At()
+	return nil
+}
+
+// Append records one model message as the matching surface event and updates the
+// in-memory session. Callers that model turns themselves should use AppendEvent.
+func (s *Store) Append(sess *Session, message llm.Message) error {
+	op := Append
+	switch message.Role {
+	case llm.RoleUser:
+		if err := s.AppendEvent(sess, "user/message", NewUserMessage(message.Content), &op, nil); err != nil {
+			return err
+		}
+	case llm.RoleAssistant:
+		data := AssistantMessageData{Turn: sess.Turn, Step: 1, Message: NewAssistantMessage(message), Stream: []any{}}
+		if err := s.AppendEvent(sess, "assistant/message", data, &op, nil); err != nil {
+			return err
+		}
+	case llm.RoleTool:
+		data := ToolResultData{Turn: sess.Turn, Step: 1, Message: NewToolResultMessage(message.ToolCallID, message.Content, false)}
+		if err := s.AppendEvent(sess, "tool/result", data, &op, nil); err != nil {
+			return err
+		}
+	case llm.RoleSystem:
+		data := SystemMessageData{Turn: sess.Turn, Step: 1, Message: NewSystemMessage(message.Content)}
+		if err := s.AppendEvent(sess, "system/message", data, &op, nil); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("session: unsupported role %q", message.Role)
+	}
 	sess.Messages = append(sess.Messages, message)
-	sess.UpdatedAt = now
 	return nil
 }
 
-func (s *Store) appendEntryLocked(id string, entry Entry) error {
-	if !idPattern.MatchString(id) {
-		return fmt.Errorf("session: invalid id %q", id)
-	}
-	if err := os.MkdirAll(s.dir, 0o755); err != nil {
-		return fmt.Errorf("session: create directory: %w", err)
-	}
-	file, err := os.OpenFile(filepath.Join(s.dir, id+".jsonl"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return fmt.Errorf("session: open %s: %w", id, err)
-	}
-	defer file.Close()
-	encoded, err := json.Marshal(entry)
-	if err != nil {
-		return fmt.Errorf("session: encode entry: %w", err)
-	}
-	if _, err := file.Write(append(encoded, '\n')); err != nil {
-		return fmt.Errorf("session: write entry: %w", err)
-	}
-	return nil
-}
-
-// Load reads one session file back into memory.
+// Load reads one session file and projects it back into model messages. A crash
+// torn trailing record is repaired before reading.
 func (s *Store) Load(id string) (*Session, error) {
 	if !idPattern.MatchString(id) {
 		return nil, fmt.Errorf("session: invalid id %q", id)
 	}
-	path := filepath.Join(s.dir, id+".jsonl")
-	file, err := os.Open(path)
-	if err != nil {
+	path := s.path(id)
+	if _, err := os.Stat(path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("session: %s not found", id)
 		}
 		return nil, fmt.Errorf("session: open %s: %w", path, err)
 	}
-	defer file.Close()
-
-	sess := &Session{ID: id, Title: "Untitled session"}
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		var entry Entry
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			return nil, fmt.Errorf("session: decode %s: %w", path, err)
-		}
-		switch entry.Type {
-		case EntryMeta:
-			sess.ID = entry.ID
-			sess.Title = entry.Title
-			if entry.CreatedAt != nil {
-				sess.CreatedAt = *entry.CreatedAt
-			}
-			sess.UpdatedAt = entry.Time
-		case EntryMessage:
-			if entry.Message != nil {
-				sess.Messages = append(sess.Messages, *entry.Message)
-				sess.UpdatedAt = entry.Time
-			}
-		default:
-			// Unknown entry types are ignored for forward compatibility.
-		}
+	if _, err := RepairTail(path); err != nil {
+		return nil, err
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("session: scan %s: %w", path, err)
+	recording, err := ReadRecording(path)
+	if err != nil {
+		return nil, err
 	}
-	return sess, nil
+	messages, err := recording.Project()
+	if err != nil {
+		return nil, err
+	}
+	title := titleOf(recording)
+	if title == "" {
+		title = "Untitled session"
+	}
+	return &Session{
+		ID:        recording.Header.ID,
+		Title:     title,
+		CreatedAt: recording.Header.Created(),
+		UpdatedAt: lastEventTime(recording),
+		Turn:      lastTurn(recording),
+		Messages:  messages,
+	}, nil
 }
 
 // List returns every stored session summary, newest first.
@@ -213,6 +257,42 @@ func (s *Store) List() ([]Summary, error) {
 	}
 	sort.Slice(summaries, func(i, j int) bool { return summaries[i].UpdatedAt.After(summaries[j].UpdatedAt) })
 	return summaries, nil
+}
+
+func titleOf(recording *Recording) string {
+	for _, event := range recording.Events {
+		if event.Type != "session/title" {
+			continue
+		}
+		var data struct {
+			Title string `json:"title"`
+		}
+		if err := json.Unmarshal(event.Data, &data); err == nil && data.Title != "" {
+			return data.Title
+		}
+	}
+	return ""
+}
+
+func lastEventTime(recording *Recording) time.Time {
+	if len(recording.Events) == 0 {
+		return recording.Header.Created()
+	}
+	return recording.Events[len(recording.Events)-1].At()
+}
+
+func lastTurn(recording *Recording) int {
+	turn := 0
+	for _, event := range recording.Events {
+		if event.Type != "turn/start" {
+			continue
+		}
+		var marker TurnMarker
+		if err := json.Unmarshal(event.Data, &marker); err == nil && marker.Turn > turn {
+			turn = marker.Turn
+		}
+	}
+	return turn
 }
 
 func newID(now time.Time) string {

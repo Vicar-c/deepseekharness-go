@@ -41,6 +41,12 @@ jobs:
       - name: go test
         run: go test ./... -count=1
 
+      # The tool batch scheduler runs tool calls in goroutines; the race detector
+      # needs cgo, which is only preinstalled on the Linux runner.
+      - name: go test -race
+        if: runner.os == 'Linux'
+        run: go test ./... -count=1 -race
+
       - name: go build
         run: go build ./cmd/dsh
 

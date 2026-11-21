@@ -45,6 +45,7 @@
 - v4 接线（批次 2 收口）：`Store` 写 header + 事件、`Load` 走"修复 → 解码 → 投影"，`agent.Loop` 一次对话写完整 turn/step/tool 事件序列；真实 CLI（mock 模型与**真实 API**）均产出合法 v4 日志。记录见 [T-0010](tasks/T-0010-session-v4-wiring.md)。
 - 流式（批次 3 第一步）：`llm.StreamingClient`（可选接口，不破坏 `Client`）+ DeepSeek SSE 解析与增量组装、`agent/stream` 瞬态事件、CLI 逐字输出（只打印一次）；真实 API 流式已验证。记录见 [T-0011](tasks/T-0011-streaming-llm-agent-cli.md)。
 - Web 流式（批次 3 收口）：`/api/chat` 按 `Accept: text/event-stream` 协商输出 SSE（`delta` / `done` / `error` 帧），前端 `fetch` + `ReadableStream` 逐字渲染；普通 JSON 调用保持兼容。记录见 [T-0012](tasks/T-0012-web-sse.md)。
+- 浏览器端 E2E：`scripts/webui-e2e.mjs` 用真实 headless Chrome（CDP，零 npm 依赖）驱动真实 `dsh web`，断言增量渲染（采样到 `web`→`web-`→`web-stream`）且无错误气泡；CI 新增 `webui` job（ubuntu + windows）。记录见 [T-0013](tasks/T-0013-browser-e2e.md)。
 
 ## 进行中
 
@@ -143,6 +144,13 @@
 - **真实 `dsh web` 进程 + mock 流式模型**：`/healthz` 正常、首页含 SSE 前端逻辑、`POST /api/chat`（Accept SSE）收到 `delta`×3 + `done{reply:"web-stream"}`
 - 前端浏览器渲染未做自动化（无 headless 浏览器），只做内容级断言 + 协议级真机请求
 - `gofmt` / `vet` / `staticcheck` / `go test` 全绿
+
+### 浏览器端 E2E（2026-11-21）
+
+- `scripts/webui-e2e.mjs`：Node 内置 http（流式 mock）+ 真实 `dsh web` + 真实 headless Chrome（CDP 直连，零 npm 依赖）
+- 结果：`{"ok":true,"finalText":"web-stream","samples":["web","web-","web-stream"]}` —— **采样到中间态，证明逐字渲染**
+- 失败时会输出页面 DOM、浏览器异常/console、network 事件与服务端日志，便于 CI 定位
+- CI 新增 `webui` job（ubuntu + windows，使用 runner 预装 Chrome）
 
 ## 相关入口
 

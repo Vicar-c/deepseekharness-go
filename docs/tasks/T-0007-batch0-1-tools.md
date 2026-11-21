@@ -41,7 +41,9 @@
 | `working_directory` 对 shell 生效 | `TestShellToolFollowsWorkingDirectory`：切换到 `sub` 后 `pwd` / `Get-Location` 输出含 `sub` |
 | 边界用例 | `edit` 保留 0600 权限；`glob` 的 `path`/`limit`/跳过 `.git`；`grep` 的 `glob` 过滤、二进制跳过、`max_matches`；`read_image` 大图跳过内联、>8 MiB 拒绝 |
 | 流水线行为 | `TestBuiltinToolsBehaveThroughThePipeline`：输出被截断、缺文件与未知工具都转为 `IsError` 结果而非中断 |
-| 测试规模 | `internal/builtin` 17 个用例；全仓库 61 个用例 |
+| shell 超时 | `TestShellToolIsKilledWhenThePipelineTimesOut`：1s 超时下 `sleep 5` 约 1.02s 返回 `IsError`，不阻塞回合 |
+| guard 拒绝 | `TestPipelineGuardBlocksBuiltinTool`：guard 否决后返回 `blocked by policy` 的 `IsError` 结果 |
+| 测试规模 | `internal/builtin` 19 个用例；全仓库 63 个用例 |
 
 ## 自动决策
 

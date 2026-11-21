@@ -23,3 +23,4 @@ Agent 的自主实现决策不在此登记，写入对应任务记录的「自�
 | [D-0004](D-0004-rename-and-hardening.md) | 仓库改名 deepseekharness-go，模块路径补 host 前缀，文档去绝对路径，补 CI | 生效 | 2026-11-16 | [T-0005](../tasks/T-0005-rename-and-hardening.md) |
 | [D-0005](D-0005-data-directory-rename.md) | 数据目录改名为 ~/.deepseekharness-go 并一次性迁移旧目录 | 生效 | 2026-11-16 | [T-0006](../tasks/T-0006-data-directory-rename.md) |
 | [D-0006](D-0006-user-study-comments.md) | 用户的学习注释不进提交，Agent 只提交显式路径 | 生效 | 2026-11-21 | —（规则类决策） |
+| [D-0007](D-0007-test-backfill-authorization.md) | 补测试默认授权，不再逐次询问；改实现仍需决策 | 生效 | 2026-11-21 | [T-0007](../tasks/T-0007-batch0-1-tools.md) |

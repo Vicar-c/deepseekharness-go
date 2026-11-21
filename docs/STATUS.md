@@ -25,6 +25,7 @@
 | 远端仓库 | `origin` → <https://github.com/Vicar-c/deepseekharness-go>（2026-11-16 由 `deekseekharness-go` 改名，模块路径同步改为 `github.com/Vicar-c/deepseekharness-go`）；**Git 不读 Windows 系统代理**，已写入仓库级 `http.proxy = http://127.0.0.1:7890` |
 | 提交身份 | `Vicar-c <244100401@qq.com>`（仓库级 `user.name`/`user.email` 固定，规则见 [D-0003](decisions/D-0003-commit-identity.md)） |
 | 工作区状态 | 用户会在代码里写中文学习注释，**不提交、不还原**（[D-0006](decisions/D-0006-user-study-comments.md)）；Agent 提交只显式列自己的路径，禁用 `git add -A` |
+| 补测试 | 为已实现行为补测试**无需询问**，直接执行（[D-0007](decisions/D-0007-test-backfill-authorization.md)）；发现缺陷需改实现时回到 D-0002 门禁 |
 
 ## 已完成
 
@@ -92,8 +93,8 @@
 - `go build ./cmd/dsh` → exit 0；`dsh tools` → **11 tools**、`plugins=4`
 - `.gitattributes`：索引本已是 LF，本次只改策略、无内容 diff
 - `staticcheck ./...` → 0 告警；`scripts/build.ps1` → `bin/dsh.exe`（commit 注入正确）
-- `internal/builtin` 17 个用例（含目录完整性、`working_directory` 对 shell 生效、边界与流水线行为）；全仓库 61 个用例
-- 提交：`c186947`（注释规则）、`8d0499b`（工具）、`e4dd2d1`（记录）、`test(builtin)`（补测）；用户注释未入库
+- `internal/builtin` 19 个用例（含目录完整性、`working_directory` 对 shell 生效、`shell` 超时被杀、guard 拒绝、边界与流水线行为）；全仓库 63 个用例
+- 提交：`c186947`（注释规则）、`8d0499b`（工具）、`e4dd2d1`（记录）、`b3bcfee`（补测）、`8052a11`（验证记录）；用户注释未入库
 
 ## 相关入口
 

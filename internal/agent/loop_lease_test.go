@@ -110,7 +110,7 @@ func TestLoopRecordsCancelledTurn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadRecording: %v", err)
 	}
-	var kinds []string
+	var reasons []session.TurnEndReason
 	for _, event := range recording.Events {
 		if event.Type != "turn/end" {
 			continue
@@ -119,10 +119,13 @@ func TestLoopRecordsCancelledTurn(t *testing.T) {
 		if err := json.Unmarshal(event.Data, &data); err != nil {
 			t.Fatalf("decode turn/end: %v", err)
 		}
-		kinds = append(kinds, data.Reason.Kind)
+		reasons = append(reasons, data.Reason)
 	}
-	if len(kinds) != 1 || kinds[0] != session.TurnEndCancelled {
-		t.Fatalf("turn/end reasons = %v, want [cancelled]", kinds)
+	if len(reasons) != 1 || reasons[0].Kind != session.TurnEndAborted {
+		t.Fatalf("turn/end reasons = %+v, want one %q", reasons, session.TurnEndAborted)
+	}
+	if reasons[0].Reason == nil || reasons[0].Reason.Kind != session.CancelCauseUser {
+		t.Fatalf("cancel cause = %+v, want %q", reasons[0].Reason, session.CancelCauseUser)
 	}
 }
 

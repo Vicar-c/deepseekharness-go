@@ -7,14 +7,28 @@ import (
 	"github.com/Vicar-c/deepseekharness-go/internal/tool"
 )
 
-// Turn end reason kinds. The loop itself only emits completed and error; a turn
-// closed by crash recovery is interrupted, and a turn the user cancelled is
-// cancelled (MIGRATION_MAP §6-5, T-0018).
+// Turn end reason kinds, copied from TurnEndReasonMap upstream. The loop itself
+// emits completed, error, aborted and max-tokens; a turn closed by crash
+// recovery is interrupted (T-0018). blocked and forked belong to the input queue
+// and to fork seeds, neither of which this rewrite has yet.
 const (
 	TurnEndCompleted   = "completed"
 	TurnEndError       = "error"
-	TurnEndCancelled   = "cancelled"
+	TurnEndAborted     = "aborted"
+	TurnEndMaxTokens   = "max-tokens"
 	TurnEndInterrupted = "interrupted"
+	TurnEndBlocked     = "blocked"
+	TurnEndForked      = "forked"
+)
+
+// Turn end cancellation causes, copied from AgentCancelCause upstream. A user
+// interrupt is the only cause this rewrite can produce.
+const (
+	CancelCauseUser     = "user"
+	CancelCauseParent   = "parent"
+	CancelCauseHook     = "hook"
+	CancelCauseDisposed = "disposed"
+	CancelCauseLegacy   = "legacy"
 )
 
 // Closer is one event recovery appends to close a crashed turn.

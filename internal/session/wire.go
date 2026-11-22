@@ -128,8 +128,25 @@ type StepMarker struct {
 	Step int `json:"step"`
 }
 
-// TurnEndReason is the structured reason of a finished turn.
+// TurnEndReason is the structured reason of a finished turn. Only the fields the
+// kind uses are set: a failed turn carries the failure, a cancelled turn carries
+// the cancellation cause.
 type TurnEndReason struct {
+	Kind   string              `json:"kind"`
+	Error  *TurnEndFailure     `json:"error,omitempty"`
+	Reason *TurnEndCancelCause `json:"reason,omitempty"`
+}
+
+// TurnEndFailure is the structured failure a failed turn records: the provider
+// neutral code and the rendered message. The upstream type is the same
+// LlmFailure object an llm/retry event carries.
+type TurnEndFailure struct {
+	Message string `json:"message"`
+	Code    string `json:"code"`
+}
+
+// TurnEndCancelCause names why a turn was cancelled.
+type TurnEndCancelCause struct {
 	Kind string `json:"kind"`
 }
 

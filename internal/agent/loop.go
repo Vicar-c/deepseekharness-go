@@ -4,7 +4,9 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +26,7 @@ const (
 	EventAgentStarted  = "agent/started"
 	EventAgentStep     = "agent/step"
 	EventAgentStream   = "agent/stream"
+	EventAgentRetry    = "agent/retry"
 	EventAgentFinished = "agent/finished"
 )
 
@@ -48,6 +51,12 @@ type Options struct {
 	// MaxParallelToolCalls bounds the overlap of concurrency-safe tool calls in
 	// one model step. Zero uses the tool pipeline default (10); 1 forces serial.
 	MaxParallelToolCalls int
+	// RetryPolicy decides which failed model calls are repeated. Nil uses the
+	// built-in normal policy.
+	RetryPolicy *llm.RetryPolicy
+	// Random samples [0,1) for retry jitter; nil means the policy applies no
+	// jitter, which keeps tests deterministic.
+	Random func() float64
 }
 
 // StepEvent is the "agent/step" payload.
@@ -74,6 +83,45 @@ type FinishedEvent struct {
 	Iterations int
 	Duration   int64 // milliseconds
 	Err        error
+}
+
+// RetryEvent is the "agent/retry" payload for one scheduled model-call retry.
+type RetryEvent struct {
+	SessionID string
+	Turn      int
+	Step      int
+	// Retry counts retries within the step, starting at 1.
+	Retry      int
+	MaxRetries int
+	// Mode is the policy mode ("normal" or "always").
+	Mode string
+	Code string
+	// Delay is how long the loop waits before the next attempt.
+	Delay time.Duration
+}
+
+// retryEventData is the llm/retry payload. Its field names match the upstream
+// LlmRetryEventData, so both implementations record the same event shape.
+type retryEventData struct {
+	RetryID    string       `json:"retryId"`
+	Turn       int          `json:"turn"`
+	Step       int          `json:"step"`
+	Provider   string       `json:"provider"`
+	Mode       string       `json:"mode"`
+	PolicyKey  string       `json:"policyKey"`
+	Retry      int          `json:"retry"`
+	MaxRetries int          `json:"maxRetries,omitempty"`
+	DelayMs    int64        `json:"delayMs"`
+	Failure    *llm.Failure `json:"failure"`
+}
+
+// retryStartedData is the llm/retry-started payload: the durable transition
+// written after the wait succeeded and before the next attempt starts.
+type retryStartedData struct {
+	RetryID string `json:"retryId"`
+	Turn    int    `json:"turn"`
+	Step    int    `json:"step"`
+	Retry   int    `json:"retry"`
 }
 
 // Loop is one agent conversation bound to one session.
@@ -168,7 +216,7 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 		if err := l.recordEnvelope(turn, iteration, request); err != nil {
 			return "", err
 		}
-		response, err := l.chat(ctx, request)
+		response, err := l.chatWithRetry(ctx, turn, iteration, request)
 		if err != nil {
 			cancelled = errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled)
 			lastErr = fmt.Errorf("agent: model call: %w", err)
@@ -188,7 +236,14 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 				return "", err
 			}
 			openStep = 0
-			if err := l.closeTurn(turn, session.TurnEndCompleted); err != nil {
+			// A response cut off by the output-token ceiling still ends the turn,
+			// but the log records why the answer stopped instead of claiming a
+			// plain completion.
+			reason := session.TurnEndReason{Kind: session.TurnEndCompleted}
+			if response.FinishReason == finishReasonLength {
+				reason.Kind = session.TurnEndMaxTokens
+			}
+			if err := l.closeTurn(turn, reason); err != nil {
 				return "", err
 			}
 			l.emit(EventAgentFinished, FinishedEvent{
@@ -244,7 +299,7 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 			lastErr = errors.Join(lastErr, err)
 		}
 	}
-	if err := l.closeTurn(turn, turnEndReason(cancelled)); err != nil {
+	if err := l.closeTurn(turn, turnEndReason(lastErr, cancelled)); err != nil {
 		lastErr = errors.Join(lastErr, err)
 	}
 	l.emit(EventAgentFinished, FinishedEvent{
@@ -259,19 +314,122 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 // Session exposes the conversation this loop writes to.
 func (l *Loop) Session() *session.Session { return l.opts.Session }
 
+// finishReasonLength is the provider finish reason of a response cut off by the
+// output-token ceiling.
+const finishReasonLength = "length"
+
+// chatWithRetry calls the model and repeats a failed attempt when the retry
+// policy allows it. Every scheduled wait is durable before it starts: llm/retry
+// is recorded first, then the cancellable wait runs, then llm/retry-started
+// marks the attempt that follows.
+//
+// An attempt that already streamed a chunk is not repeated, because the deltas
+// have been shown to the user and the event bus cannot take them back.
+func (l *Loop) chatWithRetry(ctx context.Context, turn, step int, request llm.Request) (llm.Response, error) {
+	policy := l.opts.RetryPolicy
+	if policy == nil {
+		policy = llm.DefaultRetryPolicy()
+	}
+	retryID := ""
+	for retry := 0; ; retry++ {
+		response, chunks, err := l.chat(ctx, request)
+		if err == nil {
+			return response, nil
+		}
+		failure := llm.Classify(err)
+		if ctx.Err() != nil || chunks > 0 || !policy.Retryable(failure.Code) || policy.Exhausted(retry) {
+			return llm.Response{}, err
+		}
+		delay, ok := policy.Delay(retry+1, failure.RetryAfter(), l.opts.Random)
+		if !ok {
+			return llm.Response{}, err
+		}
+		if retryID == "" {
+			retryID = newRetryID()
+		}
+		data := retryEventData{
+			RetryID:   retryID,
+			Turn:      turn,
+			Step:      step,
+			Provider:  l.provider(),
+			Mode:      policy.Mode,
+			PolicyKey: policy.Key(),
+			Retry:     retry + 1,
+			DelayMs:   delay.Milliseconds(),
+			Failure:   failure,
+		}
+		if policy.Mode != llm.RetryModeAlways {
+			data.MaxRetries = policy.MaxRetries
+		}
+		if err := l.record("llm/retry", data); err != nil {
+			return llm.Response{}, err
+		}
+		l.emit(EventAgentRetry, RetryEvent{
+			SessionID:  l.opts.Session.ID,
+			Turn:       turn,
+			Step:       step,
+			Retry:      retry + 1,
+			MaxRetries: policy.MaxRetries,
+			Mode:       policy.Mode,
+			Code:       failure.Code,
+			Delay:      delay,
+		})
+		if err := sleepContext(ctx, delay); err != nil {
+			return llm.Response{}, err
+		}
+		if err := l.record("llm/retry-started", retryStartedData{
+			RetryID: retryID,
+			Turn:    turn,
+			Step:    step,
+			Retry:   retry + 1,
+		}); err != nil {
+			return llm.Response{}, err
+		}
+	}
+}
+
+// sleepContext waits for delay, or returns the context error when the turn is
+// cancelled first.
+func sleepContext(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// newRetryID builds the identity one retry chain carries.
+func newRetryID() string {
+	random := make([]byte, 8)
+	if _, err := rand.Read(random); err != nil {
+		return fmt.Sprintf("retry-%d", time.Now().UnixNano())
+	}
+	return "retry-" + hex.EncodeToString(random)
+}
+
 // chat calls the model, streaming deltas to the event bus when the client
-// supports it and falling back to one blocking call otherwise. Both paths
-// return the same fully assembled response.
-func (l *Loop) chat(ctx context.Context, request llm.Request) (llm.Response, error) {
+// supports it and falling back to one blocking call otherwise. Both paths return
+// the same fully assembled response; the chunk count tells the retry logic
+// whether the attempt already reached the user.
+func (l *Loop) chat(ctx context.Context, request llm.Request) (llm.Response, int, error) {
 	streaming, ok := l.opts.Client.(llm.StreamingClient)
 	if !ok {
-		return l.opts.Client.Chat(ctx, request)
+		response, err := l.opts.Client.Chat(ctx, request)
+		return response, 0, err
 	}
-	return streaming.ChatStream(ctx, request, func(chunk llm.Chunk) error {
+	chunks := 0
+	response, err := streaming.ChatStream(ctx, request, func(chunk llm.Chunk) error {
 		if chunk.Content == "" && chunk.ToolCallID == "" && chunk.ToolName == "" &&
 			chunk.ToolArgs == "" && chunk.FinishReason == "" {
 			return nil
 		}
+		chunks++
 		l.emit(EventAgentStream, StreamEvent{
 			SessionID:    l.opts.Session.ID,
 			Content:      chunk.Content,
@@ -282,6 +440,7 @@ func (l *Loop) chat(ctx context.Context, request llm.Request) (llm.Response, err
 		})
 		return nil
 	})
+	return response, chunks, err
 }
 
 // record persists one log-only event. Without a store the loop stays in memory.
@@ -318,8 +477,8 @@ func (l *Loop) closeStep(turn, step int) error {
 	return l.flush()
 }
 
-func (l *Loop) closeTurn(turn int, kind string) error {
-	if err := l.record("turn/end", session.TurnEndData{Turn: turn, Reason: session.TurnEndReason{Kind: kind}}); err != nil {
+func (l *Loop) closeTurn(turn int, reason session.TurnEndReason) error {
+	if err := l.record("turn/end", session.TurnEndData{Turn: turn, Reason: reason}); err != nil {
 		return err
 	}
 	return l.flush()
@@ -337,13 +496,28 @@ func (l *Loop) flush() error {
 	return nil
 }
 
-// turnEndReason maps a failed turn to its reason: a cancelled context means the
-// user interrupted the turn, anything else is a real error.
-func turnEndReason(cancelled bool) string {
+// turnEndReason maps a failed turn to its structured reason: a cancelled
+// context means the user interrupted the turn, anything else is a real failure
+// that records the provider-neutral code next to its message.
+func turnEndReason(err error, cancelled bool) session.TurnEndReason {
 	if cancelled {
-		return session.TurnEndCancelled
+		return session.TurnEndReason{
+			Kind:   session.TurnEndAborted,
+			Reason: &session.TurnEndCancelCause{Kind: session.CancelCauseUser},
+		}
 	}
-	return session.TurnEndError
+	failure := llm.Classify(err)
+	if failure == nil {
+		failure = &llm.Failure{Message: "agent: turn failed", Code: llm.CodeUnknown}
+	}
+	code := failure.Code
+	if code == "" {
+		code = llm.CodeUnknown
+	}
+	return session.TurnEndReason{
+		Kind:  session.TurnEndError,
+		Error: &session.TurnEndFailure{Message: failure.Message, Code: code},
+	}
 }
 
 func (l *Loop) messages() []llm.Message {

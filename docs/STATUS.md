@@ -50,6 +50,7 @@
 - profiles 层叠（批次 4）：`internal/profiles` 实现 `bundle → profile patch → home patch → --patch`，`--profile` / `--patch` / `--dump-config` 上线；bundle 为 `base` / `web-app` / `headless`，profile 由内建名或 `<config dir>/profiles/<name>/package.json` 定义；传输门禁让 `dsh web --profile headless` 这类错误组合快速失败。记录见 [T-0014](tasks/T-0014-profiles-and-dump-config.md)。
 - 工具批次（批次 4）：`tool.ConcurrencySafe` 可选接口 + `Pipeline.ExecuteBatch`（并发上限、独占 barrier、模型序结果槽、取消语义），内置工具中仅只读的 6 个 opt-in；`agent.Loop` 先落全部 `tool/call` 再按模型序落 `tool/result`。记录见 [T-0015](tasks/T-0015-tool-batch.md)。
 - 差距审计（2026-11-21）：重读全部代码与文档，对照 P1 范围/验收与 §6 兼容性条目，实跑 CLI 与真实 API 复现崩溃恢复；**P1 验收 ②（resume 补齐）与 ③（并发会话压测）实测未达标**，另有请求信封、系统提示落盘、fsync 屏障、跨进程锁、LLM 错误分类等缺口。记录见 [T-0016](tasks/T-0016-gap-audit.md)。
+- 请求信封与系统提示（批次 6，2026-11-22）：`request/header`（自包含：provider/model + 工具 schema，按指纹去重，`initial`/`resume`/`change` 原因）+ `request/context`，`system/message` 作为 surface 事件在会话首轮写一次；新增 `internal/prompt` 做静态组装；`Load` 改为只读（不再修盘）。100 并发会话压测 + 读不修盘修正。记录见 [T-0019](tasks/T-0019-request-envelope.md)。
 - 崩溃恢复与取消语义（批次 5，2026-11-22）：`Store.Resume` 在续接前补齐 `interruptedTurnClosers`（未应答 `tool/call` → `TOOL_OUTCOME_UNKNOWN`、未发起 → `TOOL_NOT_STARTED`、补 `step/end`、补 `turn/end{interrupted}`）；同会话 turn 租约、`Load` 校验 header id、会话日志 BOM 容忍（含 `RepairTail` 不误截断）；`tool.Result.Code` 五个错误码；`turn/end{cancelled}` 与 SIGINT=130 / SIGTERM=0。记录见 [T-0018](tasks/T-0018-crash-recovery.md)。`n- 文档同步机制（2026-11-21）：用户要求"文档随实现并行更新"→ [D-0008](decisions/D-0008-docs-in-sync.md)；重写 README（11 工具 / v4 / 流式 / profiles / 批次并发），新增 `cmd/dsh/docs_test.go` 把 **命令清单、工具表、配置示例** 钉成测试（负向验证过），AGENTS.md §1.14 规定改动↔文档对照表，CI 增加 Markdown 链接校验。记录见 [T-0017](tasks/T-0017-docs-in-sync.md)。
 
 ## 进行中
@@ -61,7 +62,8 @@
 - **批次 4 已完成**（[T-0014](tasks/T-0014-profiles-and-dump-config.md)、[T-0015](tasks/T-0015-tool-batch.md)）：profiles 层叠 + `--dump-config` + `--patch`，以及工具批次并发 / barrier / 模型序。
 - 待办与优先级：**唯一来源是 [docs/BACKLOG.md](BACKLOG.md)**（P0/P1/P2/P3 + 规模 + 依赖 + 验收要点 + 批次拆分）。
   - **批次 5 已完成**（[T-0018](tasks/T-0018-crash-recovery.md)）：B-01 崩溃恢复、B-02 互斥/id 校验、B-03 BOM、B-04 错误码、B-05 取消语义与信号。
-  - **下一批（批次 6）**：B-06 并发压测、B-07 `request/header`、B-08 系统提示落盘 —— 见决策 **Q-0011**。
+  - **批次 6 已完成**（[T-0019](tasks/T-0019-request-envelope.md)）：B-06 并发压测与读不修盘、B-07 请求信封、B-08 系统提示落盘。
+  - **下一批（批次 7）**：B-09 fsync/flush 屏障、B-10 跨进程单写者锁 —— 见决策 **Q-0013**。
   - 决策项：B-11 zstd 读取（依赖）、B-12 Web 鉴权、B-13 P2 起点（沙箱 vs seam）。
 
 ## 决策队列（与会话内表格同源）
@@ -82,7 +84,8 @@
 | Q-0009 | 运行时数据目录是否从 `~/.deekseekharness-go/` 改名为 `~/.deepseekharness-go/`？ | A. 改名 + 一次性迁移 / B. 保持旧名 | A | **resolved**：已按 A 处理（[D-0005](decisions/D-0005-data-directory-rename.md)、[T-0006](tasks/T-0006-data-directory-rename.md)） |
 | Q-0010 | 批次 4 之后下一批做什么？ | A. P1 收尾 / B. 直接进 P2 / C. 其他 | A | **已被 Q-0011 取代**：用户要求先做完整差距审计 |
 | Q-0011 | 差距审计后先做哪一项？ | A. [BACKLOG](BACKLOG.md) 批次 5（P0：B-01 崩溃恢复 + B-02 互斥/id 校验 + B-03 BOM，带 B-04/B-05）/ B. 批次 5–8 一次授权全部 P1 收口 / C. 只做 B-01 / D. 直接进 P2 | A | **已按 A 完成批次 5**（[T-0018](tasks/T-0018-crash-recovery.md)）；下一批见 Q-0012 |
-| Q-0012 | 批次 5 之后做什么？ | A. 批次 6（B-06 并发压测 + B-07 请求信封 + B-08 系统提示）/ B. 批次 6–8 一次授权做完 P1 收口 / C. 只做 B-07（请求信封）/ D. 直接进 P2 | A | 待决策 |
+| Q-0012 | 批次 5 之后做什么？ | A. 批次 6（B-06 并发压测 + B-07 请求信封 + B-08 系统提示）/ B. 批次 6–8 一次授权做完 P1 收口 / C. 只做 B-07（请求信封）/ D. 直接进 P2 | A | **已按 A 完成批次 6**（[T-0019](tasks/T-0019-request-envelope.md)） |
+| Q-0013 | 批次 6 之后做什么？ | A. 批次 7（B-09 fsync/flush + B-10 跨进程单写者锁）/ B. 批次 7–8 一次授权做完 P1 收口 / C. 只做 B-10 / D. 直接进 P2 | A | 待决策 |
 
 ## 最近验证（2026-11-16）
 
@@ -197,6 +200,14 @@
 - 全仓库 **142 个用例**（session +7、tool +5、agent +3、server +1、cmd +3）；`gofmt`/`vet`/`staticcheck`/`go test` 全绿
 - 浏览器 E2E 仍通过（`samples=["web","web-","web-stream"]`）
 - 未验证：真实 Ctrl+C（Windows 无法可靠向子进程注入 SIGINT），只测了退出码映射
+
+### 批次 6：请求信封与系统提示（2026-11-22）
+
+- **真实 API（同一进程两轮）**：1×`system/message`、1×`request/header{initial}`、1×`request/context`；第二轮沿用，不重复写
+- **真实 API（新进程续接）**：写 `request/header{resume}`，不重复 `system/message`；header 内 11 个工具 schema 与 `dsh tools` 一致
+- 全仓库 **154 个用例**（session +3、prompt +5、agent +3，另更新事件序列断言）；`gofmt`/`vet`/`staticcheck`/`go test` 全绿
+- 100 并发会话（各 3 轮 × 6 事件）并发写 + 并发 `List`/`Load` → 100 条摘要、seq 连续
+- 浏览器 E2E 仍通过；未跑 `-race`（本机无 gcc，CI Linux 覆盖）
 
 ## 相关入口
 

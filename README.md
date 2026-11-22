@@ -12,14 +12,14 @@ DeepSeek Harness（DSH）的 **Go 重写实现**：保留上游的产品语义�
 
 | 能力 | 说明 |
 |---|---|
-| 会话 | DSH **v4 事件流**（header + 事件、`seq` 连续、`surfaceOp` 投影、崩溃尾部修复）；被杀进程留下的未闭合轮次会在续接时自动补齐；能读上游真实会话样本 |
+| 会话 | DSH **v4 事件流**（header + 事件、`seq` 连续、`surfaceOp` 投影、崩溃尾部修复）；系统提示与请求信封（含工具 schema）都落盘；被杀进程留下的未闭合轮次会在续接时自动补齐；能读上游真实会话样本 |
 | 模型 | OpenAI 兼容的 DeepSeek 客户端，非流式 + **SSE 流式**，工具调用分片组装 |
 | 工具 | 11 个内置工具；执行流水线（guard、超时、panic 恢复、输出截断、事件） |
 | 工具批次 | 并发安全的调用可重叠（默认上限 10），独占调用形成 barrier，结果始终按模型序回填 |
 | 组合 | **profiles**：`bundle → profile patch → home patch → --patch` 层叠，`--dump-config` 打印每行与每个设置的来源 |
 | CLI | `version` / `web` / `chat` / `tools` / `config`；`--prompt` 单轮、`--session` 续接 |
 | Web | 内嵌 UI（`fetch` + `ReadableStream` 逐字渲染）、`/api/chat` 支持 JSON 与 SSE（Accept 协商） |
-| 测试 | 142 个 Go 用例（`internal/*` 覆盖率 65%–84%）+ 真实浏览器 E2E（CDP 驱动 Chrome） |
+| 测试 | 154 个 Go 用例（`internal/*` 覆盖率 65%–84%，含 100 并发会话压测）+ 真实浏览器 E2E（CDP 驱动 Chrome） |
 
 ## 快速开始
 
@@ -148,7 +148,7 @@ bundle patches → profile patch → home patch(cordis.patch.json) → --patch
 gofmt -l .                                  # 必须无输出
 go vet ./...
 & "$env:USERPROFILE\go\bin\staticcheck.exe" ./...
-go test ./... -count=1                      # 142 个用例（含 README 命令/工具/配置契约测试）
+go test ./... -count=1                      # 154 个用例（含 README 契约测试与并发压测）
 .\scripts\build.ps1                         # bin\dsh.exe（注入版本与 commit）
 
 # 浏览器端 E2E（真实 Chrome，CDP，零 npm 依赖）

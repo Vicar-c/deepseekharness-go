@@ -30,9 +30,9 @@
 |---|---|---|---|---|---|
 | B-04 | 工具结果结构化错误码（`TOOL_TIMEOUT` / `TOOL_NOT_STARTED` / `TOOL_OUTCOME_UNKNOWN` / `ABORTED_BEFORE_DISPATCH`） | S | 与 B-01 同批 | `tool/result` 载荷带 code；超时/取消/未知三条用例 | done（[T-0018](tasks/T-0018-crash-recovery.md)） |
 | B-05 | `turn/end` 增加 `cancelled` / `interrupted`；CLI 信号语义（SIGINT=130、SIGTERM=0、5 秒优雅退出） | S | B-01 | Ctrl+C → 130 且日志 `turn/end{cancelled}`；SIGTERM → 0 | done（[T-0018](tasks/T-0018-crash-recovery.md)） |
-| B-06 | 并发会话压力用例：`-race` 下 100 会话读写 | S | B-02 | CI Linux 通过；无数据竞争 | todo |
-| B-07 | `request/header` + `request/context` 落盘（首轮/信封变化/替换后/恢复时写；未变步骤继承） | M | — | 同会话第二次请求不重复 header；改工具或模型则写新 header；golden 测试 | todo |
-| B-08 | `system/message` 落盘 + `internal/prompt` 静态组装（片段 + 工具 schema） | M | B-07 | 日志含 system/message；resume 后请求与首轮逐字段一致 | todo |
+| B-06 | 并发会话压力用例：`-race` 下 100 会话读写 | S | B-02 | CI Linux 通过；无数据竞争 | done（[T-0019](tasks/T-0019-request-envelope.md)） |
+| B-07 | `request/header` + `request/context` 落盘（首轮/信封变化/替换后/恢复时写；未变步骤继承） | M | — | 同会话第二次请求不重复 header；改工具或模型则写新 header；golden 测试 | done（[T-0019](tasks/T-0019-request-envelope.md)） |
+| B-08 | `system/message` 落盘 + `internal/prompt` 静态组装（片段 + 工具 schema） | M | B-07 | 日志含 system/message；resume 后请求与首轮逐字段一致 | done（[T-0019](tasks/T-0019-request-envelope.md)） |
 | B-09 | 每批 append 后 fsync + `session/flush` 屏障 | S | — | step 边界可等待 flush；写完不 Close 直接 kill 后日志完整 | todo |
 | B-10 | 跨进程单写者锁（Windows `LockFileEx` / POSIX `flock`，纯标准库） | L | — | 双进程抢写同一会话，第二个明确被拒；两平台各有用例；**不允许静默降级** | todo |
 
@@ -80,9 +80,9 @@ MCP / LSP / Skill / Subagent / Team / Jobs / Goal / Preset+Scope / Storage / Set
 | 批次 | 内容 | 预估 | 为什么这个顺序 |
 |---|---|---|---|
 | **5** | P0：B-01 + B-02 + B-03，同批带上 B-04/B-05 | ✅ 已完成 2026-11-22（[T-0018](tasks/T-0018-crash-recovery.md)） | 唯一"实测已坏"的一组；崩溃恢复、互斥、错误码、取消语义互相咬合，一起做省一次回归 |
-| **6** | B-06（并发压测）+ B-07 + B-08 | 1 天 | 数据完整性：请求信封与系统提示越晚补，历史日志缺得越多；压测先把 B-02 的并发假设钉住 |
+| **6** | B-06（并发压测）+ B-07 + B-08 | ✅ 已完成 2026-11-22（[T-0019](tasks/T-0019-request-envelope.md)） | 数据完整性：请求信封与系统提示越晚补，历史日志缺得越多；压测先把 B-02 的并发假设钉住 |
 | **7** | B-09 + B-10 | 1 天 | 持久化硬化，风险最高（跨平台锁），单独一批便于回滚 |
 | **8** | B-27 + B-28 + B-29 + B-30 | 1 天 | 错误分类与 CLI/内核的"可运维性"，做完 P1 就真的收口 |
 | **9** | 按 B-13 的决策进入 P2 | — | P2 的第一块取决于你要安全（沙箱）还是架构（seam）先走 |
 
-**当前建议**：批次 5 已完成；下一批是**批次 6**（B-06 并发压测 + B-07 请求信封 + B-08 系统提示），对应 Q-0011 的 B 选项或重新确认。
+**当前建议**：批次 6 已完成；下一批是**批次 7**（B-09 fsync/flush 屏障 + B-10 跨进程单写者锁），见 Q-0012 的 B 选项。

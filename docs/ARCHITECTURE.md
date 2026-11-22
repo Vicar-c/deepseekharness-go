@@ -45,6 +45,7 @@ DeepSeek Harness（TS/Cordis）的能力，而不是一次性移植。
 | `internal/profiles` | 启动组合：bundle → profile patch → home patch → `--patch` 层叠，`--dump-config` 输出每行/每设置的来源 |
 | `internal/llm` | `Client` 接口（可选 `StreamingClient`）、消息/工具调用模型、DeepSeek 兼容 HTTP + SSE 客户端 |
 | `internal/tool` | `Tool` 接口、`Registry`、`Pipeline`（guard/超时/panic/截断/事件）与批次调度（`ConcurrencySafe` + barrier + 模型序结果） |
+| `internal/prompt` | 系统提示静态组装：`Section` 序列 + `Harness(Runtime)`（base 指令 + model/workspace/tools） |
 | `internal/builtin` | 内置插件：`read`、`write`、`list_dir`、`edit`、`glob`、`grep`、`read_image`、`bash`/`pwsh`、`now`、`todo_write`、`working_directory` |
 | `internal/agent` | 单会话 agent loop，负责模型调用、工具批次执行与结果按模型序回填 |
 | `internal/session` | 会话 v4 事件流（格式/投影/写入器/尾部修复）的内存模型与持久化 |
@@ -90,17 +91,22 @@ if !ok {
 ```
 POST /api/chat {sessionId?, input}
   └─ server.handleChat
-       ├─ store.Load(id) 或 store.Create("New session")
+       ├─ store.Resume(id) 或 store.Create("New session")   // Resume 会先补齐中断轮次
        └─ ChatRunner(ctx, session, input)        // cmd/dsh 提供
-            └─ agent.Loop.Run(input)
+            └─ agent.Loop.Run(input)             // 先取会话租约，一次只允许一个 turn
+                 ├─ store.Append(turn/start)
+                 ├─ store.Append(system/message)  // 会话首轮写一次；历史已有则跳过
                  ├─ store.Append(user message)
                  ├─ 循环（最多 MaxIterations 次）：
+                 │    ├─ store.Append(step/start)
+                 │    ├─ store.Append(request/header)   // 信封变化才写，否则沿用
+                 │    ├─ store.Append(request/context)  // 每个 loop 一次
                  │    ├─ llm.Client.Chat(messages, tools)
                  │    ├─ store.Append(assistant message)
                  │    ├─ 若有 tool_calls：
-                 │    │    └─ tool.Pipeline.Execute(call)
+                 │    │    └─ tool.Pipeline.ExecuteBatch(calls)  // 并发安全可重叠，其余独占
                  │    │         └─ builtin tool.Execute(...)
-                 │    │    └─ store.Append(tool result message)
+                 │    │    └─ store.Append(tool result message)  // 按模型序
                  │    └─ 否则返回最终文本
                  └─ 发布 agent/started、agent/step、agent/finished
   └─ 200 {sessionId, reply}
@@ -109,7 +115,8 @@ POST /api/chat {sessionId?, input}
 关键取舍：
 
 - **工具失败不终止循环**：`Pipeline.Execute` 永远返回 `Result`，失败以 `IsError` 结果回填给模型，让模型自行纠错（与上游一致）。
-- **系统提示词**：`agent.DefaultSystemPrompt`，可通过 `agent.Options.SystemPrompt` 覆盖。
+- **系统提示词**：由 `internal/prompt` 组装（base 指令 + runtime 上下文），首个 turn 作为 `system/message` 落盘；`agent.Options.SystemPrompt` 可覆盖。
+- **请求信封**：`request/header` 自包含（provider/model + 工具 schema），信封不变就沿用上一条，所以一次回复的多个 step 只写一份；新进程续接写 `resume`。
 - **消息顺序**：assistant(tool_calls) → 每个 tool 结果（带 `tool_call_id`）→ 下一次请求，符合 OpenAI/DeepSeek 协议。
 
 ## 5. 工具执行流水线
@@ -169,6 +176,8 @@ CLI 的 `[tool] write ok 0ms` 就是订阅 `tool/executed` 打印的。
 ```
 
 - 只有 `system/message`、`developer/message`、`user/message`、`assistant/message`、`tool/result` 是 surface 事件（带 `surfaceOp`），其余是不进模型历史的记录事件；
+- `system/message` 在会话首轮写一次（模型可见的系统提示必须可重建）；`request/header` 与 `request/context` 是记录事件，分别存请求信封（含工具 schema）与路由元信息；
+- **读者不修盘**：`Load` 只读"已提交前缀"（尾部不完整或坏行在内存里丢弃），磁盘修复（`RepairTail`）只在写路径（`Resume` / `OpenWriter`）发生 —— 否则读者会截断写者正在写的行；
 - 未知事件类型必须带 `ignorable:true`，否则读取端拒绝（前向兼容的安全阀）；
 - `Recording.Project()` 把 surface 事件投影成模型消息（含 `replace` 语义与工具名反查）；
 - 写入器保证原子创建、`seq` 续写、进程内单写者与崩溃尾部修复；

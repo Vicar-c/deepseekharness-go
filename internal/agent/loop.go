@@ -308,12 +308,33 @@ func (l *Loop) appendSurface(eventType string, data any, message llm.Message) er
 	return nil
 }
 
+// closeStep ends one step and flushes it: a completed step must survive a crash,
+// so the durability checkpoint sits at the batch boundary rather than on every
+// event.
 func (l *Loop) closeStep(turn, step int) error {
-	return l.record("step/end", session.StepMarker{Turn: turn, Step: step})
+	if err := l.record("step/end", session.StepMarker{Turn: turn, Step: step}); err != nil {
+		return err
+	}
+	return l.flush()
 }
 
 func (l *Loop) closeTurn(turn int, kind string) error {
-	return l.record("turn/end", session.TurnEndData{Turn: turn, Reason: session.TurnEndReason{Kind: kind}})
+	if err := l.record("turn/end", session.TurnEndData{Turn: turn, Reason: session.TurnEndReason{Kind: kind}}); err != nil {
+		return err
+	}
+	return l.flush()
+}
+
+// flush makes the session durable. Without a store the loop is memory-only and
+// there is nothing to flush.
+func (l *Loop) flush() error {
+	if l.opts.Store == nil {
+		return nil
+	}
+	if err := l.opts.Store.Flush(l.opts.Session); err != nil {
+		return fmt.Errorf("agent: flush session: %w", err)
+	}
+	return nil
 }
 
 // turnEndReason maps a failed turn to its reason: a cancelled context means the

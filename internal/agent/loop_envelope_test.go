@@ -180,3 +180,24 @@ func TestLoopRecordsSystemMessageOnce(t *testing.T) {
 		t.Fatalf("system prompt was not recorded verbatim")
 	}
 }
+
+// TestLoopFlushesAtStepBoundaries pins the durability checkpoint: one flush after
+// every step and one after the turn, so a crash can only lose the turn in
+// progress. A turn with one tool round trip has two steps, hence three flushes.
+func TestLoopFlushesAtStepBoundaries(t *testing.T) {
+	registry := tool.NewRegistry()
+	if err := registry.Register(&echoTool{}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	client := &scriptedClient{responses: []llm.Response{
+		toolCallResponse(functionCall("call-1", "echo")),
+		llm.TextResponse("done", "stop"),
+	}}
+	loop, sess, store := buildLoop(t, client, registry, kernel.NewEvents(), 4)
+	if _, err := loop.Run(context.Background(), "hello"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := store.SyncCount(sess.ID); got != 3 {
+		t.Fatalf("syncs = %d, want 3 (two step ends plus the turn end)", got)
+	}
+}

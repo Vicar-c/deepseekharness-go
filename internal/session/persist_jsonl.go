@@ -51,15 +51,21 @@ func releaseWriter(path string) {
 
 // Writer appends v4 events to one session file. It assigns sequences and
 // timestamps, and serialises every write behind one mutex, which makes it the
-// single writer the format requires inside this process.
+// single writer the format requires inside this process. Across processes it
+// holds an exclusive OS lock on the sidecar lock file.
 type Writer struct {
 	mu     sync.Mutex
 	path   string
 	file   *os.File
+	lock   *fileLock
 	header Header
 	seq    int64
+	syncs  int64
 	closed bool
 }
+
+// lockPath is the sidecar file whose OS lock marks the session as being written.
+func lockPath(path string) string { return path + ".lock" }
 
 // CreateSessionFile writes a new session log at path with header as its first
 // line. The header is written to a temporary file and renamed into place, so a
@@ -106,37 +112,45 @@ func CreateSessionFile(path string, header Header) (*Writer, error) {
 		_ = os.Remove(tempName)
 		return nil, fmt.Errorf("session: publish session file: %w", err)
 	}
-	return openWriterAt(path, header, 0)
+	return OpenWriter(path)
 }
 
-// OpenWriter opens an existing session log for appending. A partial trailing
-// record left by a crash is repaired first, then the next sequence number is
-// derived from the last committed event.
+// OpenWriter opens an existing session log for appending. It takes the
+// cross-process lock first, so the tail repair and the sequence derivation run
+// under write ownership: a second process gets ErrSessionLocked instead of
+// racing the repair. A partial trailing record left by a crash is dropped before
+// the next sequence number is derived.
 func OpenWriter(path string) (*Writer, error) {
+	if err := acquireWriter(path); err != nil {
+		return nil, err
+	}
+	lock, err := acquireFileLock(lockPath(path))
+	if err != nil {
+		releaseWriter(path)
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
 	if _, err := RepairTail(path); err != nil {
+		_ = lock.release()
+		releaseWriter(path)
 		return nil, err
 	}
 	recording, err := ReadRecording(path)
 	if err != nil {
+		_ = lock.release()
+		releaseWriter(path)
 		return nil, err
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		_ = lock.release()
+		releaseWriter(path)
+		return nil, fmt.Errorf("session: open for append: %w", err)
 	}
 	next := int64(0)
 	if len(recording.Events) > 0 {
 		next = recording.Events[len(recording.Events)-1].Seq + 1
 	}
-	return openWriterAt(path, recording.Header, next)
-}
-
-func openWriterAt(path string, header Header, seq int64) (*Writer, error) {
-	if err := acquireWriter(path); err != nil {
-		return nil, err
-	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		releaseWriter(path)
-		return nil, fmt.Errorf("session: open for append: %w", err)
-	}
-	return &Writer{path: path, file: file, header: header, seq: seq}, nil
+	return &Writer{path: path, file: file, lock: lock, header: recording.Header, seq: next}, nil
 }
 
 // Header reports the session header this writer opened.
@@ -191,14 +205,27 @@ func (w *Writer) AppendEvent(eventType string, data any, surfaceOp *SurfaceOp, s
 	return event, nil
 }
 
-// Sync flushes the file to stable storage.
+// Sync flushes the file to stable storage. Call it at batch boundaries (a step,
+// a turn) rather than after every event: one fsync per event would dominate the
+// cost of a long turn.
 func (w *Writer) Sync() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed {
 		return ErrWriterClosed
 	}
-	return w.file.Sync()
+	if err := w.file.Sync(); err != nil {
+		return err
+	}
+	w.syncs++
+	return nil
+}
+
+// SyncCount reports how many successful flushes this writer performed.
+func (w *Writer) SyncCount() int64 {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.syncs
 }
 
 // Close syncs and closes the file and releases the single-writer slot.
@@ -212,8 +239,13 @@ func (w *Writer) Close() error {
 	w.mu.Unlock()
 	syncErr := w.file.Sync()
 	closeErr := w.file.Close()
+	lockErr := error(nil)
+	if w.lock != nil {
+		lockErr = w.lock.release()
+		w.lock = nil
+	}
 	releaseWriter(w.path)
-	return errors.Join(syncErr, closeErr)
+	return errors.Join(syncErr, closeErr, lockErr)
 }
 
 // ReadRecording opens path and decodes it as a v4 session log.

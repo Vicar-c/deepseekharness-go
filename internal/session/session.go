@@ -204,6 +204,35 @@ func (s *Store) Append(sess *Session, message llm.Message) error {
 	return nil
 }
 
+// Flush makes every event appended to the session durable. The agent loop calls
+// it at step and turn boundaries, which is the batch the format requires to be
+// on stable storage: a crash may lose the tail of the turn in progress, never a
+// completed step.
+func (s *Store) Flush(sess *Session) error {
+	if sess == nil {
+		return errors.New("session: nil session")
+	}
+	s.mu.Lock()
+	writer, ok := s.writers[sess.ID]
+	s.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	return writer.Sync()
+}
+
+// SyncCount reports how many times the session was flushed to stable storage.
+// It exists so a caller (or a test) can assert the durability checkpoint ran.
+func (s *Store) SyncCount(id string) int64 {
+	s.mu.Lock()
+	writer, ok := s.writers[id]
+	s.mu.Unlock()
+	if !ok {
+		return 0
+	}
+	return writer.SyncCount()
+}
+
 // BeginTurn reserves the session for one running turn and returns an idempotent
 // release function. A second concurrent turn on the same session is rejected
 // instead of interleaving its turn/start and step events with the first one.
@@ -239,15 +268,17 @@ func (s *Store) Resume(id string) (*Session, error) {
 	s.repairMu.Lock()
 	defer s.repairMu.Unlock()
 
-	// Resuming owns the write path, so it repairs the physical tail on disk
-	// before computing any closers. Load itself never writes.
 	if _, err := os.Stat(s.path(id)); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("session: %s not found", id)
 		}
 		return nil, fmt.Errorf("session: open %s: %w", s.path(id), err)
 	}
-	if _, err := RepairTail(s.path(id)); err != nil {
+	// Take write ownership before repairing: the tail repair below must not run
+	// while another process owns the log. OpenWriter also repairs the tail and
+	// derives the next sequence under that lock.
+	writer, err := s.writerFor(id)
+	if err != nil {
 		return nil, err
 	}
 	sess, err := s.Load(id)
@@ -261,10 +292,6 @@ func (s *Store) Resume(id string) (*Session, error) {
 	closers := InterruptedTurnClosers(recording)
 	if len(closers) == 0 {
 		return sess, nil
-	}
-	writer, err := s.writerFor(id)
-	if err != nil {
-		return nil, err
 	}
 	for _, closer := range closers {
 		if _, err := writer.AppendEvent(closer.Type, closer.Data, closer.SurfaceOp, nil); err != nil {

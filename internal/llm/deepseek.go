@@ -14,7 +14,12 @@ import (
 )
 
 // ErrMissingAPIKey is returned by the DeepSeek client when no key is configured.
-var ErrMissingAPIKey = errors.New("llm: missing API key (set DEEPSEEK_API_KEY)")
+// It is a *Failure so callers see the same taxonomy as every other model-call
+// failure; errors.Is still matches the sentinel because the value is a pointer.
+var ErrMissingAPIKey error = &Failure{
+	Message: "llm: missing API key (set DEEPSEEK_API_KEY)",
+	Code:    CodeMissingCredential,
+}
 
 // DeepSeekOptions configures the OpenAI-compatible DeepSeek client.
 type DeepSeekOptions struct {
@@ -80,6 +85,7 @@ type deepSeekResponse struct {
 	Error *struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
+		Code    string `json:"code"`
 	} `json:"error"`
 }
 
@@ -91,28 +97,31 @@ func (c *DeepSeek) Chat(ctx context.Context, request Request) (Response, error) 
 	}
 	httpResponse, err := c.http.Do(httpRequest)
 	if err != nil {
-		return Response{}, fmt.Errorf("llm: call deepseek: %w", err)
+		return Response{}, transportFailure(ctx, err)
 	}
 	defer httpResponse.Body.Close()
 
 	raw, err := io.ReadAll(io.LimitReader(httpResponse.Body, 16<<20))
 	if err != nil {
-		return Response{}, fmt.Errorf("llm: read response: %w", err)
+		return Response{}, transportFailure(ctx, err)
 	}
 	if httpResponse.StatusCode < 200 || httpResponse.StatusCode >= 300 {
-		return Response{}, fmt.Errorf("llm: deepseek HTTP %d: %s", httpResponse.StatusCode, compact(raw))
+		return Response{}, ErrorFromHTTP(httpResponse.StatusCode, httpResponse.Header, raw)
 	}
 	var decoded deepSeekResponse
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return Response{}, fmt.Errorf("llm: decode response: %w", err)
 	}
 	if decoded.Error != nil && decoded.Error.Message != "" {
-		return Response{}, fmt.Errorf("llm: deepseek error: %s", decoded.Error.Message)
+		return Response{}, ErrorFromPayload(decoded.Error.Message, decoded.Error.Code, decoded.Error.Type)
 	}
 	if len(decoded.Choices) == 0 {
 		return Response{}, errors.New("llm: deepseek returned no choices")
 	}
 	choice := decoded.Choices[0]
+	if isEmptyMessage(choice.Message) {
+		return Response{}, emptyResponseFailure()
+	}
 	return Response{
 		Message:      choice.Message,
 		FinishReason: choice.FinishReason,
@@ -132,12 +141,12 @@ func (c *DeepSeek) ChatStream(ctx context.Context, request Request, onChunk func
 
 	httpResponse, err := c.http.Do(httpRequest)
 	if err != nil {
-		return Response{}, fmt.Errorf("llm: call deepseek: %w", err)
+		return Response{}, transportFailure(ctx, err)
 	}
 	defer httpResponse.Body.Close()
 	if httpResponse.StatusCode < 200 || httpResponse.StatusCode >= 300 {
 		raw, _ := io.ReadAll(io.LimitReader(httpResponse.Body, 1<<20))
-		return Response{}, fmt.Errorf("llm: deepseek HTTP %d: %s", httpResponse.StatusCode, compact(raw))
+		return Response{}, ErrorFromHTTP(httpResponse.StatusCode, httpResponse.Header, raw)
 	}
 
 	assembler := newStreamAssembler()
@@ -160,7 +169,7 @@ func (c *DeepSeek) ChatStream(ctx context.Context, request Request, onChunk func
 			return Response{}, fmt.Errorf("llm: decode stream frame: %w", err)
 		}
 		if frame.Error != nil && frame.Error.Message != "" {
-			return Response{}, fmt.Errorf("llm: deepseek error: %s", frame.Error.Message)
+			return Response{}, ErrorFromPayload(frame.Error.Message, frame.Error.Code, frame.Error.Type)
 		}
 		for _, choice := range frame.Choices {
 			if choice.Delta.Content != "" {
@@ -188,12 +197,36 @@ func (c *DeepSeek) ChatStream(ctx context.Context, request Request, onChunk func
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		if ctx.Err() != nil {
-			return Response{}, ctx.Err()
-		}
-		return Response{}, fmt.Errorf("llm: read stream: %w", err)
+		return Response{}, transportFailure(ctx, err)
 	}
-	return assembler.response(), nil
+	response := assembler.response()
+	if isEmptyMessage(response.Message) {
+		return Response{}, emptyResponseFailure()
+	}
+	return response, nil
+}
+
+// transportFailure classifies a failure below HTTP: an aborted call, a deadline,
+// or a network error.
+func transportFailure(ctx context.Context, err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+		return &Failure{Message: "llm: request cancelled", Code: CodeAborted}
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return &Failure{Message: "llm: request timed out: " + err.Error(), Code: CodeTimeout}
+	}
+	return &Failure{Message: "llm: call deepseek: " + err.Error(), Code: CodeTransport}
+}
+
+// emptyResponseFailure reports a completion that carried no content and asked
+// for no tool call. It is retryable because the attempt produced nothing.
+func emptyResponseFailure() error {
+	return &Failure{Message: "llm: deepseek returned an empty response", Code: CodeEmptyResponse}
+}
+
+// isEmptyMessage reports whether a completion carried neither text nor tool calls.
+func isEmptyMessage(message Message) bool {
+	return strings.TrimSpace(message.Content) == "" && len(message.ToolCalls) == 0
 }
 
 func emit(onChunk func(Chunk) error, chunk Chunk) error {
@@ -255,6 +288,8 @@ type deepSeekStreamFrame struct {
 	} `json:"choices"`
 	Error *struct {
 		Message string `json:"message"`
+		Type    string `json:"type"`
+		Code    string `json:"code"`
 	} `json:"error"`
 }
 

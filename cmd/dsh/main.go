@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -36,6 +37,7 @@ Usage:
   dsh web [flags]                 Start the Web UI
   dsh chat [flags]                Chat in the terminal
   dsh tools                       List registered tools
+  dsh sessions [flags] [id]       List stored sessions, or show one
   dsh config [init]               Show the effective config, or write defaults
   dsh help                        Show this help
 
@@ -79,6 +81,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runChat(args[1:], stdout, stderr)
 	case "tools":
 		return runTools(args[1:], stdout, stderr)
+	case "sessions":
+		return runSessions(args[1:], stdout, stderr)
 	case "config":
 		return runConfig(args[1:], stdout, stderr)
 	default:
@@ -232,6 +236,10 @@ type runtime struct {
 	registry *tool.Registry
 	pipeline *tool.Pipeline
 	store    *session.Store
+	// workspace and todos hold the state the builtin tools keep outside the
+	// conversation; a resumed session restores them from its log.
+	workspace *builtin.Workspace
+	todos     *builtin.TodoStore
 }
 
 func bootstrap(cfg config.Config, tree *profiles.Tree, logger *slog.Logger) (*runtime, error) {
@@ -252,10 +260,11 @@ func bootstrap(cfg config.Config, tree *profiles.Tree, logger *slog.Logger) (*ru
 	kernel.Provide(app.Services(), store)
 
 	workspace := builtin.NewWorkspace(cfg.Workspace)
+	todos := builtin.NewTodoStore()
 	// The profile decides which plugins exist; bootstrap only maps row names to
 	// implementations, so a patch that disables a row really removes its tools.
 	for _, row := range tree.PluginRows() {
-		plugin, err := pluginFor(row, workspace)
+		plugin, err := pluginFor(row, workspace, todos)
 		if err != nil {
 			return nil, err
 		}
@@ -268,11 +277,14 @@ func bootstrap(cfg config.Config, tree *profiles.Tree, logger *slog.Logger) (*ru
 	if err := app.Boot(bootCtx); err != nil {
 		return nil, err
 	}
-	return &runtime{cfg: cfg, logger: logger, app: app, registry: registry, pipeline: pipeline, store: store}, nil
+	return &runtime{
+		cfg: cfg, logger: logger, app: app, registry: registry, pipeline: pipeline, store: store,
+		workspace: workspace, todos: todos,
+	}, nil
 }
 
 // pluginFor maps one resolved profile row to its kernel plugin.
-func pluginFor(row profiles.Row, workspace *builtin.Workspace) (kernel.Plugin, error) {
+func pluginFor(row profiles.Row, workspace *builtin.Workspace, todos *builtin.TodoStore) (kernel.Plugin, error) {
 	switch row.Name {
 	case "builtin/fs":
 		return builtin.NewFsPlugin(workspace), nil
@@ -281,7 +293,7 @@ func pluginFor(row profiles.Row, workspace *builtin.Workspace) (kernel.Plugin, e
 	case "builtin/time":
 		return builtin.NewTimePlugin(), nil
 	case "builtin/todo":
-		return builtin.NewTodoPlugin(), nil
+		return builtin.NewTodoPluginWithStore(todos), nil
 	default:
 		return nil, fmt.Errorf("dsh: profile row %q names unknown plugin %q", row.ID, row.Name)
 	}
@@ -331,6 +343,8 @@ func (r *runtime) newLoop(sess *session.Session) (*agent.Loop, error) {
 		SystemPrompt:         systemPrompt,
 		MaxIterations:        r.cfg.MaxIterations,
 		MaxParallelToolCalls: r.cfg.MaxParallelToolCalls,
+		MaxTokens:            r.cfg.MaxTokens,
+		ContextWindow:        r.cfg.ContextWindow,
 		RetryPolicy:          retryPolicy(r.cfg),
 		Random:               mathrand.Float64,
 	})
@@ -343,6 +357,40 @@ func retryPolicy(cfg config.Config) *llm.RetryPolicy {
 	policy := llm.DefaultRetryPolicy()
 	policy.MaxRetries = cfg.MaxRetries
 	return policy
+}
+
+// restoreSession replays the state a session carries outside its message
+// projection, so a resumed conversation keeps the todo list and the working
+// directory it had. A fresh session resets both: one session must not inherit
+// what another one changed.
+func (r *runtime) restoreSession(sess *session.Session) error {
+	r.workspace.ResetCwd()
+	r.todos.Replace(nil)
+	recording, err := r.store.Recording(sess.ID)
+	if err != nil {
+		return err
+	}
+	for _, event := range recording.Events {
+		switch event.Type {
+		case "todo/write":
+			var data builtin.TodoWriteData
+			if err := json.Unmarshal(event.Data, &data); err != nil {
+				return fmt.Errorf("dsh: decode todo/write: %w", err)
+			}
+			r.todos.Replace(data.Todos)
+		case "working-directory/change":
+			var data builtin.WorkingDirectoryData
+			if err := json.Unmarshal(event.Data, &data); err != nil {
+				return fmt.Errorf("dsh: decode working-directory/change: %w", err)
+			}
+			// A directory deleted since the change must not block the resume: the
+			// session continues from the workspace root instead.
+			if err := r.workspace.RestoreCwd(data.Directory); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("dsh: restore working directory %q: %w", data.Directory, err)
+			}
+		}
+	}
+	return nil
 }
 
 func runWeb(args []string, stdout, stderr io.Writer) int {
@@ -379,6 +427,9 @@ func runWeb(args []string, stdout, stderr io.Writer) int {
 		env.logger.Warn("model API key is not configured; /api/chat will return 503", "env", env.cfg.APIKeyEnv)
 	} else {
 		runner = func(ctx context.Context, sess *session.Session, input string) (string, error) {
+			if err := rt.restoreSession(sess); err != nil {
+				return "", err
+			}
 			loop, err := rt.newLoop(sess)
 			if err != nil {
 				return "", err
@@ -446,6 +497,12 @@ func runChat(args []string, stdout, stderr io.Writer) int {
 		sess, err = rt.store.Create(newTitle)
 	}
 	if err != nil {
+		fmt.Fprintf(stderr, "dsh: %v\n", err)
+		return 1
+	}
+	// A resumed session brings back its todo list and working directory; a new
+	// one starts from the defaults.
+	if err := rt.restoreSession(sess); err != nil {
 		fmt.Fprintf(stderr, "dsh: %v\n", err)
 		return 1
 	}

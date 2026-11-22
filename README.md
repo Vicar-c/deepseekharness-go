@@ -12,15 +12,15 @@ DeepSeek Harness（DSH）的 **Go 重写实现**：保留上游的产品语义�
 
 | 能力 | 说明 |
 |---|---|
-| 会话 | DSH **v4 事件流**（header + 事件、`seq` 连续、`surfaceOp` 投影、崩溃尾部修复）；**跨进程单写者锁**（POSIX `flock` / Windows `LockFileEx`，崩溃自动释放）与**每个 step 落盘**；系统提示与请求信封（含工具 schema）都落盘；被杀进程留下的未闭合轮次会在续接时自动补齐；能读上游真实会话样本 |
+| 会话 | DSH **v4 事件流**（header + 事件、`seq` 连续、`surfaceOp` 投影、崩溃尾部修复）；**跨进程单写者锁**（POSIX `flock` / Windows `LockFileEx`，崩溃自动释放）与**每个 step 落盘**；系统提示、请求信封（含工具 schema）、todo 列表与工作目录都落盘，续接时自动恢复；被杀进程留下的未闭合轮次会在续接时自动补齐；能读上游真实会话样本 |
 | 模型 | OpenAI 兼容的 DeepSeek 客户端，非流式 + **SSE 流式**，工具调用分片组装；失败按 provider 无关码分类（`AUTH`／`RATE_LIMIT`／`CONTEXT_WINDOW_EXCEEDED`／`QUOTA`／`TIMEOUT`／`TRANSPORT` 等）并按策略退避重试，每次重试先落盘 |
 | 工具 | 11 个内置工具；执行流水线（`tools/pre-execute` waterfall → 超时 → panic 恢复 → 输出截断 → 事件） |
 | 工具批次 | 并发安全的调用可重叠（默认上限 10），独占调用形成 barrier，结果始终按模型序回填 |
 | 组合 | **profiles**：`bundle → profile patch → home patch → --patch` 层叠，`--dump-config` 打印每行与每个设置的来源；两层 `.env`（项目目录 + 数据目录）在配置之前套用 |
 | 运维 | 结构化日志同时写 stderr 与 `~/.deepseekharness-go/logs/dsh.log`；启动失败保存 `Full diagnostics:` 报告并打印路径 |
-| CLI | `version` / `web` / `chat` / `tools` / `config`；`--prompt` 单轮、`--session` 续接 |
+| CLI | `version` / `web` / `chat` / `tools` / `sessions` / `config`；`--prompt` 单轮、`--session` 续接 |
 | Web | 内嵌 UI（`fetch` + `ReadableStream` 逐字渲染）、`/api/chat` 支持 JSON 与 SSE（Accept 协商） |
-| 测试 | 249 个 Go 用例（含 100 并发会话压测、跨进程锁、失败分类与重试时序）+ 真实浏览器 E2E（CDP 驱动 Chrome） |
+| 测试 | 268 个 Go 用例（含 100 并发会话压测、跨进程锁、失败分类与重试时序、状态恢复）+ 真实浏览器 E2E（CDP 驱动 Chrome） |
 
 ## 快速开始
 
@@ -54,6 +54,7 @@ go run ./cmd/dsh web
 | `dsh web [flags]` | 启动 Web UI（`--host`、`--port`） |
 | `dsh chat [flags]` | 终端对话；`--prompt` 单轮执行，`--session` 续接已有会话 |
 | `dsh tools` | 列出当前 profile 注册的工具 |
+| `dsh sessions [flags] [id]` | 列出已存会话（含最后 turn 结果），或查看一个会话的详情；`--json` 便于脚本化 |
 | `dsh config [init]` | 打印生效配置与密钥状态，或写入默认配置 |
 | `dsh help` | 打印用法 |
 <!-- cli:end -->
@@ -69,6 +70,17 @@ go run ./cmd/dsh web
 退出码：成功 `0`、用法错误 `2`、运行时失败 `1`、`Ctrl+C`（SIGINT）`130`、SIGTERM `0`。收到终止信号后会先取消当前轮次，给进程 5 秒收尾，第二次信号立即退出。
 
 启动失败（配置解析、profile 解析、boot 失败）会打印原因，并把完整报告写入 `~/.deepseekharness-go/logs/startup-*.log`，末行给出 `Full diagnostics: <path>`；报告写不出去时改为把报告正文打到 stderr。
+
+### 会话管理
+
+```powershell
+dsh sessions                 # 列出会话：id、更新时间、轮次、消息数、最后 turn 结果、标题
+dsh sessions --json          # 同样的内容，机器可读
+dsh sessions <id>            # 单个会话的详情（含日志路径与事件数）
+dsh chat --session <id>      # 续接
+```
+
+`LAST TURN` 列直接来自日志里的 `turn/end` 原因：`completed`、`error [CODE]`（例如 `error [AUTH]`）、`aborted`、`max-tokens`、`interrupted`。续接时会先补齐崩溃留下的未闭合轮次，再恢复该会话的 todo 列表与工作目录。
 
 ## 内置工具
 
@@ -110,7 +122,9 @@ go run ./cmd/dsh web
   "maxParallelToolCalls": 10,
   "logLevel": "info",
   "logFile": "C:\\Users\\<you>\\.deepseekharness-go\\logs\\dsh.log",
-  "maxRetries": 5
+  "maxRetries": 5,
+  "maxTokens": 8192,
+  "contextWindow": 65536
 }
 ```
 
@@ -118,9 +132,10 @@ go run ./cmd/dsh web
 `--dump-config` 会为每个设置打印来源，例如 `"model": "patch:C:\\tmp\\x.json"`。
 
 `maxRetries` 是一次失败模型调用的重试预算（默认 5；`0` 表示不重试）。只有可重试的错误码才会重试（默认 `EMPTY_RESPONSE`、`RATE_LIMIT`、`SERVER`、`TIMEOUT`、`TRANSPORT`）；退避为 500ms 起、上限 10s、±10% 抖动，provider 给出 `Retry-After` 时按它等待。
+`maxTokens` 限制单次回答的输出长度（`0` = 用 provider 默认），`contextWindow` 记录当前模型的上下文上限（`0` = 未知，`request/context` 里省略），两者都可从环境变量 `DSH_MAX_TOKENS` / `DSH_CONTEXT_WINDOW` 覆盖。
 `logFile` 为 `off` 时只写 stderr。
 
-常用环境变量：`DEEPSEEK_API_KEY`、`DSH_MODEL`、`DSH_BASE_URL`、`DSH_WORKSPACE`、`DSH_SESSION_DIR`、`DSH_LOG_LEVEL`、`DSH_LOG_FILE`、`DSH_MAX_ITERATIONS`、`DSH_MAX_PARALLEL_TOOL_CALLS`、`DSH_MAX_RETRIES`。
+常用环境变量：`DEEPSEEK_API_KEY`、`DSH_MODEL`、`DSH_BASE_URL`、`DSH_WORKSPACE`、`DSH_SESSION_DIR`、`DSH_LOG_LEVEL`、`DSH_LOG_FILE`、`DSH_MAX_ITERATIONS`、`DSH_MAX_PARALLEL_TOOL_CALLS`、`DSH_MAX_RETRIES`、`DSH_MAX_TOKENS`、`DSH_CONTEXT_WINDOW`。
 `DEEPSEEK_API_KEY` 未设置时 harness 仍可启动，但 `/api/chat` 与 `chat` 会返回明确错误。
 
 ### `.env`（两层）
@@ -164,7 +179,7 @@ bundle patches → profile patch → home patch(cordis.patch.json) → --patch
 gofmt -l .                                  # 必须无输出
 go vet ./...
 & "$env:USERPROFILE\go\bin\staticcheck.exe" ./...
-go test ./... -count=1                      # 249 个用例（含 README 契约测试、并发压测、跨进程锁、重试时序）
+go test ./... -count=1                      # 268 个用例（含 README 契约测试、并发压测、跨进程锁、重试时序）
 .\scripts\build.ps1                         # bin\dsh.exe（注入版本与 commit）
 
 # 浏览器端 E2E（真实 Chrome，CDP，零 npm 依赖）

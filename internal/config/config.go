@@ -57,6 +57,12 @@ type Config struct {
 	LogFile string `json:"logFile"`
 	// MaxRetries bounds how often one failed model call is repeated.
 	MaxRetries int `json:"maxRetries"`
+	// MaxTokens bounds the completion length of one model call. Zero leaves the
+	// provider default in place, which is what an omitted request field means.
+	MaxTokens int `json:"maxTokens"`
+	// ContextWindow is the route's advertised context size. Zero means unknown,
+	// so request/context omits it instead of recording a wrong bound.
+	ContextWindow int `json:"contextWindow"`
 
 	// sources records the layer each setting came from (default, file, env,
 	// flag, bundle, profile, home patch, --patch). It is never serialized.
@@ -87,6 +93,8 @@ func Default() Config {
 		LogLevel:             "info",
 		LogFile:              defaultLogFile(),
 		MaxRetries:           DefaultMaxRetries,
+		MaxTokens:            0,
+		ContextWindow:        0,
 	}
 	cfg.markDefaults()
 	return cfg
@@ -228,6 +236,14 @@ func (c *Config) Normalize() error {
 			c.mark(FieldMaxRetries, SourceDefault)
 		}
 	}
+	// Both bounds are optional: zero is a legitimate "unset" rather than a
+	// missing default, so only a negative value is rejected.
+	if c.MaxTokens < 0 {
+		return fmt.Errorf("config: maxTokens must not be negative, got %d", c.MaxTokens)
+	}
+	if c.ContextWindow < 0 {
+		return fmt.Errorf("config: contextWindow must not be negative, got %d", c.ContextWindow)
+	}
 	if strings.TrimSpace(c.Model) == "" {
 		return errors.New("config: model must not be empty")
 	}
@@ -326,6 +342,14 @@ func (c *Config) applyEnv() {
 	if value, err := strconv.Atoi(os.Getenv("DSH_MAX_PARALLEL_TOOL_CALLS")); err == nil && value > 0 {
 		c.MaxParallelToolCalls = value
 		c.mark(FieldMaxParallelToolCalls, SourceEnvPrefix+"DSH_MAX_PARALLEL_TOOL_CALLS")
+	}
+	if value, err := strconv.Atoi(os.Getenv("DSH_MAX_TOKENS")); err == nil && value > 0 {
+		c.MaxTokens = value
+		c.mark(FieldMaxTokens, SourceEnvPrefix+"DSH_MAX_TOKENS")
+	}
+	if value, err := strconv.Atoi(os.Getenv("DSH_CONTEXT_WINDOW")); err == nil && value > 0 {
+		c.ContextWindow = value
+		c.mark(FieldContextWindow, SourceEnvPrefix+"DSH_CONTEXT_WINDOW")
 	}
 }
 

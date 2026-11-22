@@ -23,6 +23,8 @@ const (
 	FieldLogLevel             = "logLevel"
 	FieldLogFile              = "logFile"
 	FieldMaxRetries           = "maxRetries"
+	FieldMaxTokens            = "maxTokens"
+	FieldContextWindow        = "contextWindow"
 )
 
 // SettingSources are the prefixes of the provenance values recorded for each
@@ -51,6 +53,8 @@ func Fields() []string {
 		FieldLogLevel,
 		FieldLogFile,
 		FieldMaxRetries,
+		FieldMaxTokens,
+		FieldContextWindow,
 	}
 }
 
@@ -101,8 +105,9 @@ func (c *Config) Set(field string, value any, source string) error {
 		c.setString(field, text)
 		c.mark(field, source)
 		return nil
-	case FieldMaxRetries:
-		// Zero is a legitimate retry budget: it disables retries.
+	case FieldMaxRetries, FieldMaxTokens, FieldContextWindow:
+		// Zero is a legitimate value for all three: no retries, provider default
+		// completion length, unknown context size.
 		number, err := asInt(field, value)
 		if err != nil {
 			return err
@@ -110,7 +115,7 @@ func (c *Config) Set(field string, value any, source string) error {
 		if number < 0 {
 			return fmt.Errorf("config: %s must not be negative, got %d", field, number)
 		}
-		c.MaxRetries = number
+		c.setInt(field, number)
 		c.mark(field, source)
 		return nil
 	case FieldMaxIterations, FieldRequestTimeoutSec, FieldToolTimeoutSec, FieldMaxToolOutputBytes, FieldMaxParallelToolCalls:
@@ -160,6 +165,12 @@ func (c *Config) setInt(field string, value int) {
 		c.MaxToolOutputBytes = value
 	case FieldMaxParallelToolCalls:
 		c.MaxParallelToolCalls = value
+	case FieldMaxRetries:
+		c.MaxRetries = value
+	case FieldMaxTokens:
+		c.MaxTokens = value
+	case FieldContextWindow:
+		c.ContextWindow = value
 	}
 }
 

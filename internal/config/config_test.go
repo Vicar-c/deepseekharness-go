@@ -216,3 +216,73 @@ func TestHomeDirFollowsTheConfigPath(t *testing.T) {
 		t.Fatalf("HomeDir = %q, want %q", got, directory)
 	}
 }
+
+// TestOptionalModelBounds covers maxTokens and contextWindow: both default to
+// zero ("unset"), accept an explicit value from any layer, and reject a
+// negative number instead of silently ignoring it.
+func TestOptionalModelBounds(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("HOME", home)
+	t.Setenv("DSH_CONFIG", "")
+	t.Setenv("DSH_MAX_TOKENS", "")
+	t.Setenv("DSH_CONTEXT_WINDOW", "")
+	if got := config.Default().MaxTokens; got != 0 {
+		t.Fatalf("default maxTokens = %d, want 0", got)
+	}
+	if got := config.Default().ContextWindow; got != 0 {
+		t.Fatalf("default contextWindow = %d, want 0", got)
+	}
+	path := filepath.Join(home, "config.json")
+	body := `{"maxTokens":512,"contextWindow":65536}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.MaxTokens != 512 || cfg.ContextWindow != 65536 {
+		t.Fatalf("bounds = %d/%d, want 512/65536", cfg.MaxTokens, cfg.ContextWindow)
+	}
+	if cfg.Source(config.FieldMaxTokens) == "" || cfg.Source(config.FieldContextWindow) == "" {
+		t.Fatalf("provenance missing: %+v", cfg.Sources())
+	}
+	t.Setenv("DSH_MAX_TOKENS", "1024")
+	t.Setenv("DSH_CONTEXT_WINDOW", "200000")
+	cfg, err = config.Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.MaxTokens != 1024 || cfg.ContextWindow != 200000 {
+		t.Fatalf("env bounds = %d/%d", cfg.MaxTokens, cfg.ContextWindow)
+	}
+	if err := os.WriteFile(path, []byte(`{"maxTokens":-1}`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	t.Setenv("DSH_MAX_TOKENS", "")
+	t.Setenv("DSH_CONTEXT_WINDOW", "")
+	if _, err := config.Load(path); err == nil {
+		t.Fatal("expected a negative maxTokens to be rejected")
+	}
+	if err := os.WriteFile(path, []byte(`{"contextWindow":-5}`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := config.Load(path); err == nil {
+		t.Fatal("expected a negative contextWindow to be rejected")
+	}
+}
+
+// TestSetAcceptsZeroBounds keeps patch files able to clear a bound explicitly.
+func TestSetAcceptsZeroBounds(t *testing.T) {
+	cfg := config.Default()
+	if err := cfg.Set(config.FieldMaxTokens, 0, "patch:x"); err != nil {
+		t.Fatalf("Set maxTokens: %v", err)
+	}
+	if err := cfg.Set(config.FieldContextWindow, 0, "patch:x"); err != nil {
+		t.Fatalf("Set contextWindow: %v", err)
+	}
+	if err := cfg.Set(config.FieldMaxTokens, -1, "patch:x"); err == nil {
+		t.Fatal("expected a negative maxTokens to be rejected")
+	}
+}

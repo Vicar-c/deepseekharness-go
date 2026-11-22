@@ -51,8 +51,9 @@ func TestLoopPersistsV4EventStream(t *testing.T) {
 
 	want := []string{
 		"session/title",
-		"turn/start", "system/message", "user/message",
-		"step/start", "request/header", "request/context", "assistant/message", "tool/call", "tool/result", "step/end",
+		"turn/start",
+		"step/start", "system/message", "user/message",
+		"request/header", "request/context", "assistant/message", "tool/call", "tool/result", "step/end",
 		"step/start", "assistant/message", "step/end",
 		"turn/end",
 	}

@@ -189,19 +189,6 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 	if err := l.record("turn/start", session.TurnMarker{Turn: turn}); err != nil {
 		return "", err
 	}
-	// The rendered system prompt is recorded once per session, before the first
-	// user message, so a resumed conversation replays the same request prefix.
-	if !l.hasSystemMessage() {
-		prompt := l.opts.SystemPrompt
-		if err := l.appendSurface("system/message",
-			session.SystemMessageData{Turn: turn, Step: 1, Message: session.NewSystemMessage(prompt)},
-			llm.TextMessage(llm.RoleSystem, prompt)); err != nil {
-			return "", err
-		}
-	}
-	if err := l.appendSurface("user/message", session.NewUserMessage(input), llm.TextMessage(llm.RoleUser, input)); err != nil {
-		return "", err
-	}
 
 	openStep := 0
 	var lastErr error
@@ -211,6 +198,22 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 			return "", err
 		}
 		openStep = iteration
+		// The system prompt and the user message belong to the first step: the
+		// upstream format requires a surface event inside an open step, and the
+		// first surface event must be the system message.
+		if iteration == 1 {
+			if !l.hasSystemMessage() {
+				prompt := l.opts.SystemPrompt
+				if err := l.appendSurface("system/message",
+					session.SystemMessageData{Turn: turn, Step: 1, Message: session.NewSystemMessage(prompt)},
+					llm.TextMessage(llm.RoleSystem, prompt)); err != nil {
+					return "", err
+				}
+			}
+			if err := l.appendSurface("user/message", session.NewUserMessage(input), llm.TextMessage(llm.RoleUser, input)); err != nil {
+				return "", err
+			}
+		}
 		request := llm.Request{
 			Model:     l.opts.Model,
 			Messages:  l.messages(),

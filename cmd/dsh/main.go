@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	mathrand "math/rand/v2"
 	"net"
 	"os"
 	"strconv"
@@ -120,33 +121,95 @@ func addCommonFlags(fs *flag.FlagSet) *commonFlags {
 	return flags
 }
 
-func (flags *commonFlags) load(stderr io.Writer) (config.Config, *profiles.Tree, *slog.Logger, error) {
+// loaded is everything a command needs from the configuration layers.
+type loaded struct {
+	cfg    config.Config
+	tree   *profiles.Tree
+	logger *slog.Logger
+	// envFiles lists the .env layers that supplied values, in precedence order.
+	envFiles []config.EnvLayer
+	closeLog func()
+}
+
+func (flags *commonFlags) load(stderr io.Writer) (*loaded, error) {
 	migrated, err := config.MigrateLegacyDataDir()
 	if err != nil {
-		return config.Config{}, nil, nil, err
+		return nil, err
 	}
 	if migrated {
 		fmt.Fprintf(stderr, "dsh: migrated data directory to ~/%s\n", config.DataDirName)
 	}
+	// The .env layers are applied first: the configuration resolves the API key
+	// from the environment while loading, so a key declared in a file has to be
+	// in place before Load runs.
+	envFiles, err := applyEnvFiles(stderr)
+	if err != nil {
+		return nil, err
+	}
 	cfg, err := config.Load(flags.configPath)
 	if err != nil {
-		return config.Config{}, nil, nil, err
+		return nil, err
 	}
 	// Layer order matches the loader: file, environment, profile layers, then
 	// explicit command-line flags.
 	tree, err := profiles.Resolve(profiles.Options{Name: flags.profile, Patches: flags.patches})
 	if err != nil {
-		return config.Config{}, nil, nil, err
+		return nil, err
 	}
 	if err := tree.ApplySettings(&cfg); err != nil {
-		return config.Config{}, nil, nil, err
+		return nil, err
 	}
 	cfg.ApplyFlags(flags.model, flags.baseURL, flags.workspace, flags.logLevel)
 	if err := cfg.Normalize(); err != nil {
-		return config.Config{}, nil, nil, err
+		return nil, err
 	}
-	logger := newLogger(cfg.LogLevel)
-	return cfg, tree, logger, nil
+	logger, closeLog := newLogger(cfg.LogLevel, cfg.LogFile, stderr)
+	return &loaded{cfg: cfg, tree: tree, logger: logger, envFiles: envFiles, closeLog: closeLog}, nil
+}
+
+// applyEnvFiles reads the project and user .env layers and applies them to the
+// process environment. A refusal (a .env file that declares a bootstrap
+// variable) is an error, so the process stops instead of running with half of a
+// configuration.
+func applyEnvFiles(stderr io.Writer) ([]config.EnvLayer, error) {
+	cwd, err := os.Getwd()
+	if err != nil || cwd == "" {
+		cwd = "."
+	}
+	return config.LoadEnvLayers(config.EnvLoadOptions{
+		BinName: "dsh",
+		Cwd:     cwd,
+		Home:    config.HomeDir(),
+		Warn:    func(line string) { fmt.Fprint(stderr, line) },
+	})
+}
+
+// reportFailure prints one startup failure and saves its diagnostics report, so
+// a user can paste a path instead of a wall of terminal output.
+func (flags *commonFlags) reportFailure(stderr io.Writer, err error) {
+	reportStartupFailure(stderr, diagnosticContext{
+		Home:       config.HomeDir(),
+		Version:    version.String(),
+		Profile:    profileName(flags.profile),
+		ConfigPath: configPathOf(flags.configPath),
+	}, fmt.Errorf("dsh: %w", err))
+}
+
+// profileName reports the profile the run would boot, with the built-in default
+// filled in.
+func profileName(name string) string {
+	if strings.TrimSpace(name) == "" {
+		return "default"
+	}
+	return name
+}
+
+// configPathOf reports the config file the run would read.
+func configPathOf(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return config.FilePath()
+	}
+	return path
 }
 
 // dumpIfRequested prints the resolved profile and configuration when
@@ -160,23 +223,6 @@ func dumpIfRequested(flags *commonFlags, cfg config.Config, tree *profiles.Tree,
 		return true, 1
 	}
 	return true, 0
-}
-
-func newLogger(level string) *slog.Logger {
-	var parsed slog.Level
-	switch strings.ToLower(strings.TrimSpace(level)) {
-	case "debug":
-		parsed = slog.LevelDebug
-	case "warn", "warning":
-		parsed = slog.LevelWarn
-	case "error":
-		parsed = slog.LevelError
-	default:
-		parsed = slog.LevelInfo
-	}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: parsed}))
-	slog.SetDefault(logger)
-	return logger
 }
 
 type runtime struct {
@@ -285,7 +331,18 @@ func (r *runtime) newLoop(sess *session.Session) (*agent.Loop, error) {
 		SystemPrompt:         systemPrompt,
 		MaxIterations:        r.cfg.MaxIterations,
 		MaxParallelToolCalls: r.cfg.MaxParallelToolCalls,
+		RetryPolicy:          retryPolicy(r.cfg),
+		Random:               mathrand.Float64,
 	})
+}
+
+// retryPolicy builds the model-call retry policy. The backoff shape follows the
+// upstream provider defaults; only the retry budget is configurable, because a
+// different backoff is a provider property rather than a user preference.
+func retryPolicy(cfg config.Config) *llm.RetryPolicy {
+	policy := llm.DefaultRetryPolicy()
+	policy.MaxRetries = cfg.MaxRetries
+	return policy
 }
 
 func runWeb(args []string, stdout, stderr io.Writer) int {
@@ -297,28 +354,29 @@ func runWeb(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	cfg, tree, logger, err := flags.load(stderr)
+	env, err := flags.load(stderr)
 	if err != nil {
-		fmt.Fprintf(stderr, "dsh: %v\n", err)
+		flags.reportFailure(stderr, err)
 		return 1
 	}
-	if dumped, code := dumpIfRequested(flags, cfg, tree, stdout, stderr); dumped {
+	defer env.closeLog()
+	if dumped, code := dumpIfRequested(flags, env.cfg, env.tree, stdout, stderr); dumped {
 		return code
 	}
-	if !tree.Enabled(profiles.TransportWeb) {
-		fmt.Fprintf(stderr, "dsh: profile %q does not enable the web transport (%s)\n", tree.Profile, profiles.TransportWeb)
+	if !env.tree.Enabled(profiles.TransportWeb) {
+		fmt.Fprintf(stderr, "dsh: profile %q does not enable the web transport (%s)\n", env.tree.Profile, profiles.TransportWeb)
 		return 1
 	}
-	rt, err := bootstrap(cfg, tree, logger)
+	rt, err := bootstrap(env.cfg, env.tree, env.logger)
 	if err != nil {
-		fmt.Fprintf(stderr, "dsh: boot: %v\n", err)
+		flags.reportFailure(stderr, fmt.Errorf("boot: %w", err))
 		return 1
 	}
 	defer rt.close()
 
 	var runner server.ChatRunner
-	if cfg.APIKey() == "" {
-		logger.Warn("model API key is not configured; /api/chat will return 503", "env", cfg.APIKeyEnv)
+	if env.cfg.APIKey() == "" {
+		env.logger.Warn("model API key is not configured; /api/chat will return 503", "env", env.cfg.APIKeyEnv)
 	} else {
 		runner = func(ctx context.Context, sess *session.Session, input string) (string, error) {
 			loop, err := rt.newLoop(sess)
@@ -329,7 +387,7 @@ func runWeb(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	srv, err := server.New(server.Options{Config: cfg, Store: rt.store, Runner: runner, Events: rt.app.Events(), Logger: logger})
+	srv, err := server.New(server.Options{Config: env.cfg, Store: rt.store, Runner: runner, Events: rt.app.Events(), Logger: env.logger})
 	if err != nil {
 		fmt.Fprintf(stderr, "dsh: web: %v\n", err)
 		return 1
@@ -356,21 +414,22 @@ func runChat(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	cfg, tree, logger, err := flags.load(stderr)
+	env, err := flags.load(stderr)
 	if err != nil {
-		fmt.Fprintf(stderr, "dsh: %v\n", err)
+		flags.reportFailure(stderr, err)
 		return 1
 	}
-	if dumped, code := dumpIfRequested(flags, cfg, tree, stdout, stderr); dumped {
+	defer env.closeLog()
+	if dumped, code := dumpIfRequested(flags, env.cfg, env.tree, stdout, stderr); dumped {
 		return code
 	}
-	if !tree.Enabled(profiles.TransportCLI) {
-		fmt.Fprintf(stderr, "dsh: profile %q does not enable the CLI transport (%s)\n", tree.Profile, profiles.TransportCLI)
+	if !env.tree.Enabled(profiles.TransportCLI) {
+		fmt.Fprintf(stderr, "dsh: profile %q does not enable the CLI transport (%s)\n", env.tree.Profile, profiles.TransportCLI)
 		return 1
 	}
-	rt, err := bootstrap(cfg, tree, logger)
+	rt, err := bootstrap(env.cfg, env.tree, env.logger)
 	if err != nil {
-		fmt.Fprintf(stderr, "dsh: boot: %v\n", err)
+		flags.reportFailure(stderr, fmt.Errorf("boot: %w", err))
 		return 1
 	}
 	defer rt.close()
@@ -406,6 +465,21 @@ func runChat(args []string, stdout, stderr io.Writer) int {
 			outcome = "error"
 		}
 		fmt.Fprintf(stderr, "[tool] %s %s %dms\n", payload.Call.Name, outcome, payload.Duration)
+	})
+
+	// A retry is worth one line on stderr: the user otherwise waits without
+	// knowing that the harness is repeating a failed model call.
+	rt.app.Events().On(agent.EventAgentRetry, func(event kernel.Event) {
+		payload, ok := event.Payload.(agent.RetryEvent)
+		if !ok {
+			return
+		}
+		budget := "unbounded"
+		if payload.Mode == llm.RetryModeNormal {
+			budget = fmt.Sprintf("of %d", payload.MaxRetries)
+		}
+		fmt.Fprintf(stderr, "[retry] attempt %d %s in %s (%s)\n",
+			payload.Retry, budget, payload.Delay.Round(time.Millisecond), payload.Code)
 	})
 
 	// Streaming deltas arrive as transient agent/stream events; the complete
@@ -481,17 +555,18 @@ func runTools(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	cfg, tree, logger, err := flags.load(stderr)
+	env, err := flags.load(stderr)
 	if err != nil {
-		fmt.Fprintf(stderr, "dsh: %v\n", err)
+		flags.reportFailure(stderr, err)
 		return 1
 	}
-	if dumped, code := dumpIfRequested(flags, cfg, tree, stdout, stderr); dumped {
+	defer env.closeLog()
+	if dumped, code := dumpIfRequested(flags, env.cfg, env.tree, stdout, stderr); dumped {
 		return code
 	}
-	rt, err := bootstrap(cfg, tree, logger)
+	rt, err := bootstrap(env.cfg, env.tree, env.logger)
 	if err != nil {
-		fmt.Fprintf(stderr, "dsh: boot: %v\n", err)
+		flags.reportFailure(stderr, fmt.Errorf("boot: %w", err))
 		return 1
 	}
 	defer rt.close()
@@ -535,21 +610,36 @@ func runConfig(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "wrote %s\n", path)
 		return 0
 	}
-	cfg, tree, _, err := flags.load(stderr)
+	env, err := flags.load(stderr)
 	if err != nil {
-		fmt.Fprintf(stderr, "dsh: %v\n", err)
+		flags.reportFailure(stderr, err)
 		return 1
 	}
-	if dumped, code := dumpIfRequested(flags, cfg, tree, stdout, stderr); dumped {
+	defer env.closeLog()
+	if dumped, code := dumpIfRequested(flags, env.cfg, env.tree, stdout, stderr); dumped {
 		return code
 	}
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	data, err := json.MarshalIndent(env.cfg, "", "  ")
 	if err != nil {
 		fmt.Fprintf(stderr, "dsh: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "config file: %s\napi key: %s\n\n%s\n", path, apiKeyStatus(cfg), data)
+	fmt.Fprintf(stdout, "config file: %s\nenv files: %s\napi key: %s\n\n%s\n",
+		path, envFileSummary(env.envFiles), apiKeyStatus(env.cfg), data)
 	return 0
+}
+
+// envFileSummary names the .env layers that supplied values, or "none" when no
+// layer file exists.
+func envFileSummary(layers []config.EnvLayer) string {
+	if len(layers) == 0 {
+		return "none"
+	}
+	paths := make([]string, 0, len(layers))
+	for _, layer := range layers {
+		paths = append(paths, layer.Path)
+	}
+	return strings.Join(paths, ", ")
 }
 
 func apiKeyStatus(cfg config.Config) string {

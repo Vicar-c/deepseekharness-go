@@ -1,10 +1,12 @@
 package config_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/Vicar-c/deepseekharness-go/internal/config"
+	"github.com/Vicar-c/deepseekharness-go/internal/llm"
 )
 
 func TestLoadDefaultsWhenFileMissing(t *testing.T) {
@@ -130,5 +132,87 @@ func TestFilePathHonoursDSHConfig(t *testing.T) {
 	t.Setenv("DSH_CONFIG", explicit)
 	if got := config.FilePath(); got != explicit {
 		t.Fatalf("FilePath = %q, want %q", got, explicit)
+	}
+}
+
+// TestMaxRetriesDefaultsAndExplicitZero keeps the retry budget configurable: a
+// missing value uses the built-in default, while an explicit zero disables
+// retries instead of being mistaken for "unset".
+func TestMaxRetriesDefaultsAndExplicitZero(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("HOME", home)
+	t.Setenv("DSH_CONFIG", "")
+	t.Setenv("DSH_MAX_RETRIES", "")
+	if got := config.Default().MaxRetries; got != config.DefaultMaxRetries {
+		t.Fatalf("default maxRetries = %d, want %d", got, config.DefaultMaxRetries)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"maxRetries":0}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.MaxRetries != 0 {
+		t.Fatalf("maxRetries = %d, want an explicit 0", cfg.MaxRetries)
+	}
+	if err := os.WriteFile(path, []byte(`{"maxRetries":-1}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := config.Load(path); err == nil {
+		t.Fatal("expected a negative maxRetries to be rejected")
+	}
+	t.Setenv("DSH_MAX_RETRIES", "2")
+	cfg, err = config.Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.MaxRetries != 2 {
+		t.Fatalf("maxRetries = %d, want the environment override 2", cfg.MaxRetries)
+	}
+	if cfg.Source(config.FieldMaxRetries) != "env:DSH_MAX_RETRIES" {
+		t.Fatalf("provenance = %q", cfg.Source(config.FieldMaxRetries))
+	}
+}
+
+// TestMaxRetriesDefaultMatchesTheLLM keeps the documented default and the policy
+// default from drifting apart.
+func TestMaxRetriesDefaultMatchesTheLLM(t *testing.T) {
+	if config.DefaultMaxRetries != llm.DefaultMaxRetries {
+		t.Fatalf("config.DefaultMaxRetries = %d, llm.DefaultMaxRetries = %d",
+			config.DefaultMaxRetries, llm.DefaultMaxRetries)
+	}
+}
+
+// TestLogFileDefaultAndOverrides pins where the structured log lands.
+func TestLogFileDefaultAndOverrides(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("HOME", home)
+	t.Setenv("DSH_CONFIG", "")
+	t.Setenv("DSH_LOG_FILE", "")
+	want := filepath.Join(home, ".deepseekharness-go", "logs", "dsh.log")
+	if got := config.Default().LogFile; got != want {
+		t.Fatalf("default logFile = %q, want %q", got, want)
+	}
+	t.Setenv("DSH_LOG_FILE", "off")
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LogFile != config.LogFileOff {
+		t.Fatalf("logFile = %q, want off", cfg.LogFile)
+	}
+}
+
+// TestHomeDirFollowsTheConfigPath keeps logs, profiles and .env layers beside
+// the configuration the process actually uses.
+func TestHomeDirFollowsTheConfigPath(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("DSH_CONFIG", filepath.Join(directory, "config.json"))
+	if got := config.HomeDir(); got != directory {
+		t.Fatalf("HomeDir = %q, want %q", got, directory)
 	}
 }

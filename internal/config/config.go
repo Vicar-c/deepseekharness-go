@@ -22,6 +22,11 @@ const (
 	// DefaultMaxParallelToolCalls is how many concurrency-safe tool calls may
 	// overlap inside one model step. 1 forces serial execution.
 	DefaultMaxParallelToolCalls = 10
+	// DefaultMaxRetries is how often one failed model call is repeated by
+	// default. It mirrors llm.DefaultMaxRetries; a test keeps the two in step.
+	DefaultMaxRetries = 5
+	// LogFileOff disables the log file.
+	LogFileOff = "off"
 	// DataDirName is the directory under the user's home that holds the config
 	// file and the sessions. It is kept out of ~/.dsh so the Go rewrite never
 	// touches the installed desktop app's data.
@@ -47,6 +52,11 @@ type Config struct {
 	// the same time inside one step; 1 makes every batch serial.
 	MaxParallelToolCalls int    `json:"maxParallelToolCalls"`
 	LogLevel             string `json:"logLevel"`
+	// LogFile receives the structured log in addition to stderr; "off" disables
+	// the file.
+	LogFile string `json:"logFile"`
+	// MaxRetries bounds how often one failed model call is repeated.
+	MaxRetries int `json:"maxRetries"`
 
 	// sources records the layer each setting came from (default, file, env,
 	// flag, bundle, profile, home patch, --patch). It is never serialized.
@@ -75,9 +85,31 @@ func Default() Config {
 		MaxToolOutputBytes:   128 * 1024,
 		MaxParallelToolCalls: DefaultMaxParallelToolCalls,
 		LogLevel:             "info",
+		LogFile:              defaultLogFile(),
+		MaxRetries:           DefaultMaxRetries,
 	}
 	cfg.markDefaults()
 	return cfg
+}
+
+// defaultLogFile is the log file used when nothing else is configured.
+func defaultLogFile() string {
+	return filepath.Join(HomeDir(), "logs", "dsh.log")
+}
+
+// HomeDir reports the directory that holds the configuration, the profiles, the
+// logs and (unless sessionDir says otherwise) the sessions. It is deliberately
+// not the installed desktop app's ~/.dsh: the rewrite never reads or writes the
+// upstream profile or session data.
+func HomeDir() string {
+	if explicit := strings.TrimSpace(os.Getenv("DSH_CONFIG")); explicit != "" {
+		return filepath.Dir(explicit)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "."
+	}
+	return filepath.Join(home, DataDirName)
 }
 
 // FilePath resolves the config file location: $DSH_CONFIG wins, otherwise
@@ -179,6 +211,23 @@ func (c *Config) Normalize() error {
 		c.LogLevel = base.LogLevel
 		c.mark(FieldLogLevel, SourceDefault)
 	}
+	if strings.TrimSpace(c.LogFile) == "" {
+		c.LogFile = base.LogFile
+		c.mark(FieldLogFile, SourceDefault)
+	}
+	// A negative retry budget is meaningless rather than merely unset: it is
+	// rejected so a typo fails loudly. Zero disables retries and is only
+	// replaced by the default when no layer supplied it.
+	if c.MaxRetries < 0 {
+		return fmt.Errorf("config: maxRetries must not be negative, got %d", c.MaxRetries)
+	}
+	if c.MaxRetries == 0 {
+		switch c.Source(FieldMaxRetries) {
+		case "", SourceDefault:
+			c.MaxRetries = base.MaxRetries
+			c.mark(FieldMaxRetries, SourceDefault)
+		}
+	}
 	if strings.TrimSpace(c.Model) == "" {
 		return errors.New("config: model must not be empty")
 	}
@@ -261,6 +310,14 @@ func (c *Config) applyEnv() {
 	if value := os.Getenv("DSH_LOG_LEVEL"); value != "" {
 		c.LogLevel = value
 		c.mark(FieldLogLevel, SourceEnvPrefix+"DSH_LOG_LEVEL")
+	}
+	if value := os.Getenv("DSH_LOG_FILE"); value != "" {
+		c.LogFile = value
+		c.mark(FieldLogFile, SourceEnvPrefix+"DSH_LOG_FILE")
+	}
+	if value, err := strconv.Atoi(os.Getenv("DSH_MAX_RETRIES")); err == nil && value >= 0 && os.Getenv("DSH_MAX_RETRIES") != "" {
+		c.MaxRetries = value
+		c.mark(FieldMaxRetries, SourceEnvPrefix+"DSH_MAX_RETRIES")
 	}
 	if value, err := strconv.Atoi(os.Getenv("DSH_MAX_ITERATIONS")); err == nil && value > 0 {
 		c.MaxIterations = value

@@ -21,6 +21,8 @@ const (
 	FieldMaxToolOutputBytes   = "maxToolOutputBytes"
 	FieldMaxParallelToolCalls = "maxParallelToolCalls"
 	FieldLogLevel             = "logLevel"
+	FieldLogFile              = "logFile"
+	FieldMaxRetries           = "maxRetries"
 )
 
 // SettingSources are the prefixes of the provenance values recorded for each
@@ -47,6 +49,8 @@ func Fields() []string {
 		FieldMaxToolOutputBytes,
 		FieldMaxParallelToolCalls,
 		FieldLogLevel,
+		FieldLogFile,
+		FieldMaxRetries,
 	}
 }
 
@@ -89,12 +93,24 @@ func (c *Config) markDefaults() {
 // rejected so a typo in a patch file fails loudly instead of being ignored.
 func (c *Config) Set(field string, value any, source string) error {
 	switch field {
-	case FieldModel, FieldBaseURL, FieldAPIKeyEnv, FieldWorkspace, FieldSessionDir, FieldLogLevel:
+	case FieldModel, FieldBaseURL, FieldAPIKeyEnv, FieldWorkspace, FieldSessionDir, FieldLogLevel, FieldLogFile:
 		text, err := asString(field, value)
 		if err != nil {
 			return err
 		}
 		c.setString(field, text)
+		c.mark(field, source)
+		return nil
+	case FieldMaxRetries:
+		// Zero is a legitimate retry budget: it disables retries.
+		number, err := asInt(field, value)
+		if err != nil {
+			return err
+		}
+		if number < 0 {
+			return fmt.Errorf("config: %s must not be negative, got %d", field, number)
+		}
+		c.MaxRetries = number
 		c.mark(field, source)
 		return nil
 	case FieldMaxIterations, FieldRequestTimeoutSec, FieldToolTimeoutSec, FieldMaxToolOutputBytes, FieldMaxParallelToolCalls:
@@ -127,6 +143,8 @@ func (c *Config) setString(field, value string) {
 		c.SessionDir = value
 	case FieldLogLevel:
 		c.LogLevel = value
+	case FieldLogFile:
+		c.LogFile = value
 	}
 }
 

@@ -113,6 +113,15 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 	if input == "" {
 		return "", errors.New("agent: empty input")
 	}
+	// One turn at a time per session: without the lease, two concurrent runs
+	// interleave turn/start and step events into one log.
+	if l.opts.Store != nil {
+		release, err := l.opts.Store.BeginTurn(l.opts.Session.ID)
+		if err != nil {
+			return "", err
+		}
+		defer release()
+	}
 	started := time.Now()
 	turn := l.opts.Session.Turn + 1
 	l.opts.Session.Turn = turn
@@ -127,6 +136,7 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 
 	openStep := 0
 	var lastErr error
+	cancelled := false
 	for iteration := 1; iteration <= l.opts.MaxIterations; iteration++ {
 		if err := l.record("step/start", session.StepMarker{Turn: turn, Step: iteration}); err != nil {
 			return "", err
@@ -139,6 +149,7 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 		}
 		response, err := l.chat(ctx, request)
 		if err != nil {
+			cancelled = errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled)
 			lastErr = fmt.Errorf("agent: model call: %w", err)
 			break
 		}
@@ -156,7 +167,7 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 				return "", err
 			}
 			openStep = 0
-			if err := l.closeTurn(turn, "completed"); err != nil {
+			if err := l.closeTurn(turn, session.TurnEndCompleted); err != nil {
 				return "", err
 			}
 			l.emit(EventAgentFinished, FinishedEvent{
@@ -191,6 +202,7 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 			data := session.ToolResultData{
 				Turn:    turn,
 				Step:    iteration,
+				Code:    result.Code,
 				Message: session.NewToolResultMessage(call.ID, result.Content, result.IsError),
 			}
 			if err := l.appendSurface("tool/result", data, message); err != nil {
@@ -211,7 +223,7 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 			lastErr = errors.Join(lastErr, err)
 		}
 	}
-	if err := l.closeTurn(turn, "error"); err != nil {
+	if err := l.closeTurn(turn, turnEndReason(cancelled)); err != nil {
 		lastErr = errors.Join(lastErr, err)
 	}
 	l.emit(EventAgentFinished, FinishedEvent{
@@ -281,6 +293,15 @@ func (l *Loop) closeStep(turn, step int) error {
 
 func (l *Loop) closeTurn(turn int, kind string) error {
 	return l.record("turn/end", session.TurnEndData{Turn: turn, Reason: session.TurnEndReason{Kind: kind}})
+}
+
+// turnEndReason maps a failed turn to its reason: a cancelled context means the
+// user interrupted the turn, anything else is a real error.
+func turnEndReason(cancelled bool) string {
+	if cancelled {
+		return session.TurnEndCancelled
+	}
+	return session.TurnEndError
 }
 
 func (l *Loop) messages() []llm.Message {

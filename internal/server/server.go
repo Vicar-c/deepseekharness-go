@@ -175,7 +175,9 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	var sess *session.Session
 	var err error
 	if id := strings.TrimSpace(request.SessionID); id != "" {
-		sess, err = s.opts.Store.Load(id)
+		// Resume, not Load: a chat continues the session and therefore owns the
+		// write path, which also closes a turn a crash left open.
+		sess, err = s.opts.Store.Resume(id)
 	} else {
 		sess, err = s.opts.Store.Create("New session")
 	}

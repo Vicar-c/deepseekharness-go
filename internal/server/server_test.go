@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -166,5 +168,55 @@ func TestIndexPageAndValidation(t *testing.T) {
 	}
 	if status, _ := postJSON(t, ts.URL+"/api/chat", `{"input":"x","sessionId":"../escape"}`); status != http.StatusNotFound {
 		t.Fatalf("traversal session status = %d", status)
+	}
+}
+
+// TestChatRepairsAnInterruptedSession pins the wiring: a chat request continues
+// the session through Resume, so a turn a crash left open is closed before the
+// new turn starts instead of being sent to the model with a dangling tool call.
+func TestChatRepairsAnInterruptedSession(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
+	id := "20261122-444444-eeeeeeee"
+	log := `{"type":"session","version":4,"id":"` + id + `","createdAt":1763000000000,"isSeeded":false}
+{"type":"session/title","data":{"title":"crashed"},"seq":0,"time":1763000000000}
+{"type":"turn/start","data":{"turn":1},"seq":1,"time":1763000000000}
+{"type":"user/message","data":{"turn":1,"step":0,"message":{"id":"u1","role":"user","content":[{"type":"text","text":"hi"}],"source":{"kind":"user"}}},"surfaceOp":"append","seq":2,"time":1763000000000}
+{"type":"step/start","data":{"turn":1,"step":1},"seq":3,"time":1763000000000}
+{"type":"assistant/message","data":{"turn":1,"step":1,"message":{"id":"a1","role":"assistant","content":[{"type":"tool-call","id":"call-1","name":"read","arguments":"{}"}],"source":{"kind":"model"}},"stream":[]},"surfaceOp":"append","seq":4,"time":1763000000000}
+{"type":"tool/call","data":{"turn":1,"step":1,"callId":"call-1","name":"read","arguments":"{}"},"seq":5,"time":1763000000000}
+`
+	path := filepath.Join(store.Dir(), id+".jsonl")
+	if err := os.MkdirAll(store.Dir(), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(log), 0o644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	httpServer := newServerWithStore(t, store, func(ctx context.Context, sess *session.Session, input string) (string, error) {
+		return "repaired", nil
+	})
+	status, payload := postJSON(t, httpServer.URL+"/api/chat", `{"sessionId":"`+id+`","input":"continue"}`)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d (%v)", status, payload)
+	}
+
+	recording, err := session.ReadRecording(path)
+	if err != nil {
+		t.Fatalf("ReadRecording: %v", err)
+	}
+	var repaired bool
+	for _, event := range recording.Events {
+		if event.Type != "turn/end" {
+			continue
+		}
+		var data session.TurnEndData
+		if err := json.Unmarshal(event.Data, &data); err == nil && data.Reason.Kind == session.TurnEndInterrupted {
+			repaired = true
+		}
+	}
+	if !repaired {
+		t.Fatalf("chat did not repair the interrupted turn: %+v", recording.Events)
 	}
 }

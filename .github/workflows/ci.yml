@@ -38,6 +38,15 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # staticcheck is part of the local quality gate; running it here means a
+      # warning cannot land just because a contributor skipped the local step.
+      # Pinned so a new release cannot change the result of an old commit.
+      - name: staticcheck
+        if: runner.os == 'Linux'
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
+          staticcheck ./...
+
       - name: go test
         run: go test ./... -count=1
 

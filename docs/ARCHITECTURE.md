@@ -120,6 +120,7 @@ POST /api/chat {sessionId?, input}
                  │    ├─ 若有 tool_calls：
                  │    │    └─ tool.Pipeline.ExecuteBatch(calls)  // 并发安全可重叠，其余独占
                  │    │         └─ builtin tool.Execute(...)
+                 │    │         └─ store.Append(state events)      // todo/write、working-directory/change 先落盘
                  │    │    └─ store.Append(tool result message)  // 按模型序
                  │    └─ 否则返回最终文本
                  └─ 发布 agent/started、agent/step、agent/finished
@@ -133,6 +134,8 @@ POST /api/chat {sessionId?, input}
 - **请求信封**：`request/header` 自包含（provider/model + 工具 schema），信封不变就沿用上一条，所以一次回复的多个 step 只写一份；新进程续接写 `resume`。
 - **模型失败先分类再重试**：一次失败的模型调用先归一化成 `llm.Failure{code, message, status?, providerRetryAfterMs?, requestId?}`，再由 `RetryPolicy` 决定是否重试（见 §10）。可重试且尚未向用户输出任何分片时，按 `llm/retry` → 等待 → `llm/retry-started` 的顺序重试同一次请求；**已经流出内容分片的尝试不重试**，避免终端/UI 出现重复文本。
 - **消息顺序**：assistant(tool_calls) → 每个 tool 结果（带 `tool_call_id`）→ 下一次请求，符合 OpenAI/DeepSeek 协议。
+- **工具状态先于结果落盘**：工具除了文本结果，还可以返回 `tool.Result.State`（例如 `todo/write`、`working-directory/change`）。loop 在写 `tool/result` 之前按模型序写入这些事件，并由 loop 补齐 `turn`/`step`——工具不知道自己在第几轮。这样"日志能重建状态"与"批次并发无关"同时成立。
+- **取消保留已输出的前缀**：流式回答被中断时，用户已经看到的文本会作为 `assistant/message` 写入（紧随其后才是 `turn/end{aborted}`），下一次请求的历史与屏幕一致；非取消的流错误不写这条消息，避免伪造一个模型没说完的回答。
 - **`turn/end` 记录结构化原因**：`completed`、`error`（带完整 `LlmFailure`：`error:{message,code,status?,providerRetryAfterMs?,requestId?}`）、`aborted`（带 `reason:{kind:"user"}`）、`max-tokens`（模型输出被 token 上限截断）；崩溃补齐的轮次写 `interrupted`。
 
 ## 5. 工具执行流水线
@@ -151,7 +154,9 @@ POST /api/chat {sessionId?, input}
 
 新增工具：实现 `tool.Tool`（`Definition` + `Execute`），在某个 `kernel.Plugin.Apply` 里 `registry.Register` 即可。
 
-失败结果带**结构化错误码**（`Result.Code`，写入 `tool/result` 的 `code` 字段）：`TOOL_TIMEOUT`（超时）、`TOOL_NOT_FOUND`（未注册）、`TOOL_BLOCKED`（guard 拒绝）、`TOOL_PANICKED`（panic 恢复）、`ABORTED_BEFORE_DISPATCH`（批次取消没启动）。这样日志与 UI 不必解析自然语言就能区分失败类型。
+工具失败带**结构化错误码**（`Result.Code`，写入 `tool/result` 的 `code` 字段）：`TOOL_TIMEOUT`（超时）、`TOOL_NOT_FOUND`（未注册）、`TOOL_BLOCKED`（guard/waterfall 拒绝）、`TOOL_PANICKED`（panic 恢复）、`ABORTED_BEFORE_DISPATCH`（批次取消没启动）。这样日志与 UI 不必解析自然语言就能区分失败类型。
+
+工具还可以返回 `Result.State`：不进入对话、但需要从日志重建的状态变更。目前有两个消费者——`todo_write` 返回 `todo/write`，`working_directory` 在真正改变目录时返回 `working-directory/change`（只查询不产生事件）。事件类型必须在会话事件词汇表内，否则写入会被拒绝。
 
 ### 批次执行（`Pipeline.ExecuteBatch`）
 
@@ -191,9 +196,10 @@ CLI 的 `[tool] write ok 0ms` 就是订阅 `tool/executed` 打印的。
 {"type":"step/start","data":{"turn":1,"step":1},"seq":3,"time":...}
 {"type":"assistant/message","data":{"message":{...,"content":[{"type":"tool-call",...}]}},"surfaceOp":"append","seq":4,"time":...}
 {"type":"tool/call","data":{"callId":"...","name":"read","arguments":"{}"},"seq":5,"time":...}
-{"type":"tool/result","data":{"message":{...}},"surfaceOp":"append","seq":6,"time":...}
-{"type":"step/end","data":{...},"seq":7,"time":...}
-{"type":"turn/end","data":{"reason":{"kind":"completed"}},"seq":8,"time":...}
+{"type":"todo/write","data":{"turn":1,"step":1,"todos":[...]},"seq":6,"time":...}
+{"type":"tool/result","data":{"message":{...}},"surfaceOp":"append","seq":7,"time":...}
+{"type":"step/end","data":{...},"seq":8,"time":...}
+{"type":"turn/end","data":{"reason":{"kind":"completed"}},"seq":9,"time":...}
 ```
 
 - 只有 `system/message`、`developer/message`、`user/message`、`assistant/message`、`tool/result` 是 surface 事件（带 `surfaceOp`），其余是不进模型历史的记录事件；
@@ -203,8 +209,10 @@ CLI 的 `[tool] write ok 0ms` 就是订阅 `tool/executed` 打印的。
 - `Recording.Project()` 把 surface 事件投影成模型消息（含 `replace` 语义与工具名反查）；
 - 写入器保证原子创建、`seq` 续写与崩溃尾部修复；**同一会话只有一个写者**——进程内用占位表，跨进程用 sidecar 锁文件（`<id>.jsonl.lock`，POSIX `flock` / Windows `LockFileEx`，进程退出由内核释放）；`step/end` 与 `turn/end` 之后 `fsync`，掉电最多丢当前 step；
 - **崩溃恢复**：日志若以打开的 `turn/start` 结束，`Store.Resume` 会在发布会话前补一批普通事件 —— 未应答的 `tool/call` 补 `TOOL_OUTCOME_UNKNOWN`、模型要过但没发起的补 `TOOL_NOT_STARTED`、补 `step/end`、补合成的 `turn/end{interrupted}`。`Store.Load` 保持只读，Web 的会话查看不会改日志；
-- **轮次结束原因**：循环自己只发 `completed` / `error`；用户取消是 `cancelled`，恢复补齐的是 `interrupted`；
-- 细节与夹具出处见 [T-0008](tasks/T-0008-session-v4-format-layer.md)、[T-0009](tasks/T-0009-session-v4-projection-and-writer.md)、[T-0010](tasks/T-0010-session-v4-wiring.md)、[T-0018](tasks/T-0018-crash-recovery.md)。
+- **轮次结束原因**：`completed`、`error`（带完整失败对象）、`aborted`（用户取消，带 `reason:{kind:"user"}`）、`max-tokens`（输出被上限截断）、`interrupted`（崩溃补齐）；
+- **状态记录事件**：`todo/write`（完整 todo 列表）与 `working-directory/change`（root 相对路径）由工具通过 `Result.State` 产生，loop 补 `turn`/`step` 后落盘；续接会话时 `Store.Recording` 只读地回放这两类事件，把状态恢复到进程内的 `TodoStore` / `Workspace`（目录已被删除时退回工作区根，不阻断续接）；
+- **`dsh sessions`** 用同一个只读路径列出会话：`turn/end` 原因与事件数来自日志，`messages` 来自投影；`--json` 输出同一结构；
+- 细节与夹具出处见 [T-0008](tasks/T-0008-session-v4-format-layer.md)、[T-0009](tasks/T-0009-session-v4-projection-and-writer.md)、[T-0010](tasks/T-0010-session-v4-wiring.md)、[T-0018](tasks/T-0018-crash-recovery.md)、[T-0023](tasks/T-0023-batch9-sessions-and-state.md)。
 
 ## 8. HTTP API
 

@@ -24,7 +24,7 @@
 | P0 | 实测损坏与数据安全 | **0**（B-01…B-03 全 done） |
 | P1 | P1 验收 + §6 A/B 兼容 | **1 项，且是验证类**（B-14 反向互操作；不改产品代码） |
 | 决策 | 需用户拍板 | **2 项**（B-11 zstd 读、B-12 Web 鉴权） |
-| P2 | 功能闭环 / 安全 / 生态 / 运维 | **15 项**（下面按顺序排列） |
+| P2 | 功能闭环 / 安全 / 生态 / 运维 | **11 项**（15 项中 4 项已完成） |
 | 工程化 | 穿插做，不单独排阶段 | **5 项** |
 | P3/P4 | 只登记不排期 | 见 [MIGRATION_MAP](MIGRATION_MAP.md) §3/§5 |
 
@@ -76,24 +76,24 @@
 4. **然后输出与上下文治理**：spill、context providers、系统提示变更都建立在 seam 与 compaction 之上。
 5. **最后生态与运维**：Web 工具、UI、日志轮转、清理。价值真实，但不阻塞日常闭环。
 
-| 顺序 | ID | 事项 | 规模 | 依赖 | 验收要点 |
-|---|---|---|---|---|---|
-| 1 | B-35 | `contextWindow` / `maxTokens` 配置，并写入 `request/context` 与请求体 | XS | — | 配置后 `request/context.contextWindow` 有值、请求带 `max_tokens`；跨平台无回归 |
-| 2 | B-31 | `todo/write`、`working-directory/change` 落盘与恢复 | S | B-02 | 重启后 todo 列表与 shell cwd 与日志一致；两类事件真的出现在事件流里 |
-| 3 | B-32 | `dsh sessions` 子命令（列表/查看/续接提示） | S | — | 列出 id/标题/时间/最后一个 turn 原因；`--json` 可脚本化 |
-| 4 | B-34 | 取消时保留已流式输出的前缀（写 `assistant/message` + `aborted`） | S | — | Ctrl+C 后日志含已输出文本，下一次请求历史里也看得到（上游行为） |
-| 5 | B-14 | 反向互操作验证（上游解析器读 Go 日志） | S | 上游 checkout | 见 §P1 残余 |
-| 6 | B-24 | `compaction`（basic + 工具结果剪枝） | L | B-07/B-08 | 长会话撞上限后自动压缩并继续；压缩事件可重放；真实 API 验证一次 |
-| 7 | B-20 | `fs` / `shell` / `subprocess` seam 抽取 | L | — | `builtin` 只依赖接口，可用假实现替换；行为零变化（回归测试作证） |
-| 8 | B-21 | `sandbox` 三模式（read-only / workspace-write / danger-full-access）+ 平台后端 | XL | B-20 | 三模式各有用例；越界写被拒且错误可区分；`sandbox/mode` 事件落盘 |
-| 9 | B-23 | `tools/pre-execute` 审批策略层（ask/allow/deny + 一次性授权） | M | B-21 | 三态决策；`approval/asked`/`approval/decided` 事件；拒绝不伪装成失败 |
-| 10 | B-22 | 工具输出 spill / 落盘策略 | M | B-20 | 超限输出落盘并可再读；模型看到摘要与路径 |
-| 11 | B-26 | `context` providers（time / instructions） | S | B-08 | 每步注入的上下文可配置，并以 `user/message` 的合成来源落盘 |
-| 12 | B-36 | 系统提示变更（`system/message` 可再写 + `request/header{change}` 可达） | S | — | 换 profile/工具集后续接会写新 header 与新系统提示 |
-| 13 | B-33 | Web UI 会话列表/切换与刷新保留；工具调用卡片 | M | B-32、**B-12 决策** | 刷新不丢会话；可在历史会话间切换 |
-| 14 | B-25 | `web_fetch` / `web_search` | M | B-21 | 网络策略生效；私网目标默认拒绝；有脱网用例 |
-| 15 | B-37 | 日志轮转与大小上限 | S | — | 超过上限自动轮转；`dsh config` 显示当前文件与上限 |
-| 16 | B-38 | 会话与锁文件清理（`dsh sessions prune`） | S | B-32 | 清理孤儿 `.lock` 与空会话；默认 dry-run，`--yes` 才删 |
+| 顺序 | ID | 事项 | 规模 | 依赖 | 验收要点 | 状态 |
+|---|---|---|---|---|---|---|
+| 1 | B-35 | `contextWindow` / `maxTokens` 配置，并写入 `request/context` 与请求体 | XS | — | 配置后 `request/context.contextWindow` 有值、请求带 `max_tokens`；跨平台无回归 | done（[T-0023](tasks/T-0023-batch9-sessions-and-state.md)） |
+| 2 | B-31 | `todo/write`、`working-directory/change` 落盘与恢复 | S | B-02 | 重启后 todo 列表与 shell cwd 与日志一致；两类事件真的出现在事件流里 | done（[T-0023](tasks/T-0023-batch9-sessions-and-state.md)） |
+| 3 | B-32 | `dsh sessions` 子命令（列表/查看/续接提示） | S | — | 列出 id/标题/时间/最后一个 turn 原因；`--json` 可脚本化 | done（[T-0023](tasks/T-0023-batch9-sessions-and-state.md)） |
+| 4 | B-34 | 取消时保留已流式输出的前缀（写 `assistant/message` + `aborted`） | S | — | Ctrl+C 后日志含已输出文本，下一次请求历史里也看得到（上游行为） | done（[T-0023](tasks/T-0023-batch9-sessions-and-state.md)） |
+| 5 | B-14 | 反向互操作验证（上游解析器读 Go 日志） | S | 上游 checkout | 见 §P1 残余 | todo |
+| 6 | B-24 | `compaction`（basic + 工具结果剪枝） | L | B-07/B-08 | 长会话撞上限后自动压缩并继续；压缩事件可重放；真实 API 验证一次 | todo |
+| 7 | B-20 | `fs` / `shell` / `subprocess` seam 抽取 | L | — | `builtin` 只依赖接口，可用假实现替换；行为零变化（回归测试作证） | todo |
+| 8 | B-21 | `sandbox` 三模式（read-only / workspace-write / danger-full-access）+ 平台后端 | XL | B-20 | 三模式各有用例；越界写被拒且错误可区分；`sandbox/mode` 事件落盘 | todo |
+| 9 | B-23 | `tools/pre-execute` 审批策略层（ask/allow/deny + 一次性授权） | M | B-21 | 三态决策；`approval/asked`/`approval/decided` 事件；拒绝不伪装成失败 | todo |
+| 10 | B-22 | 工具输出 spill / 落盘策略 | M | B-20 | 超限输出落盘并可再读；模型看到摘要与路径 | todo |
+| 11 | B-26 | `context` providers（time / instructions） | S | B-08 | 每步注入的上下文可配置，并以 `user/message` 的合成来源落盘 | todo |
+| 12 | B-36 | 系统提示变更（`system/message` 可再写 + `request/header{change}` 可达） | S | — | 换 profile/工具集后续接会写新 header 与新系统提示 | todo |
+| 13 | B-33 | Web UI 会话列表/切换与刷新保留；工具调用卡片 | M | B-32、**B-12 决策** | 刷新不丢会话；可在历史会话间切换 | todo |
+| 14 | B-25 | `web_fetch` / `web_search` | M | B-21 | 网络策略生效；私网目标默认拒绝；有脱网用例 | todo |
+| 15 | B-37 | 日志轮转与大小上限 | S | — | 超过上限自动轮转；`dsh config` 显示当前文件与上限 | todo |
+| 16 | B-38 | 会话与锁文件清理（`dsh sessions prune`） | S | B-32 | 清理孤儿 `.lock` 与空会话；默认 dry-run，`--yes` 才删 | todo |
 
 **为什么是这个顺序（可推翻的三个点）**：
 
@@ -122,7 +122,7 @@
 
 | 批次 | 内容 | 预估 | 为什么这个顺序 |
 |---|---|---|---|
-| **9** | B-35 + B-31 + B-32 + B-34 | 0.5 天 | 小件批：无依赖、用户立刻可见；先拿掉"每天碰得到"的粗糙处 |
+| **9** | B-35 + B-31 + B-32 + B-34 | ✅ 已完成 2026-11-22（[T-0023](tasks/T-0023-batch9-sessions-and-state.md)） | 小件批：无依赖、用户立刻可见；先拿掉"每天碰得到"的粗糙处 |
 | **10** | B-14 + B-40 + B-43 | 0.5 天 | 补齐 P1 最后一条验收，并把 staticcheck 与重试回归进 CI，给后续改动装网 |
 | **11** | B-24 | 0.5–1 天 | 唯一的功能性死局；单独一批便于回滚（压缩会改请求内容） |
 | **12** | B-20 + B-22 | 1 天 | seam 与它的第一个消费者同批，避免做出一个没人用的空接口 |
@@ -131,9 +131,10 @@
 | **15** | B-25 + B-37 + B-38 | 1 天 | 生态与运维收尾 |
 | **16** | B-41 + B-42 + B-44 | — | 工程化债务，穿插或最后集中 |
 
-**当前建议**：从**批次 9**（B-35 + B-31 + B-32 + B-34，约半天）开始；B-11/B-12 两个决策不阻塞批次 9–12，但 B-12 必须在 B-33 之前拍板。
+**当前建议**：批次 9 已完成；下一批是**批次 10**（B-14 反向互操作 + B-40 staticcheck 进 CI + B-43 假端点重试回归，约半天）。B-11/B-12 两个决策不阻塞批次 10–12，但 B-12 必须在 B-33 之前拍板。
 
 ## 变更记录
 
+- **2026-11-22（批次 9 后）**：B-31/B-32/B-34/B-35 done；P2 剩 11 项。下一批改为批次 10（B-14 + B-40 + B-43）。（[T-0023](tasks/T-0023-batch9-sessions-and-state.md)）
 - **2026-11-22**：批次 8 收口（B-27…B-30 done，P1 代码侧清零）；新增 B-14（P1 残余）、B-34…B-38（P2 新发现缺口）；把 P2 从"分组清单"改为**有序表**并记录排序理由；新增工程化 B-43/B-44；B-13 由 Q-0015 收敛。（[T-0022](tasks/T-0022-p2-backlog-and-priorities.md)）
 - 2026-11-21：差距审计后建立本表（T-0016），拆出批次 5–8。

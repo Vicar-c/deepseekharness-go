@@ -54,6 +54,7 @@
 - 请求信封与系统提示（批次 6，2026-11-22）：`request/header`（自包含：provider/model + 工具 schema，按指纹去重，`initial`/`resume`/`change` 原因）+ `request/context`，`system/message` 作为 surface 事件在会话首轮写一次；新增 `internal/prompt` 做静态组装；`Load` 改为只读（不再修盘）。100 并发会话压测 + 读不修盘修正。记录见 [T-0019](tasks/T-0019-request-envelope.md)。
 - 崩溃恢复与取消语义（批次 5，2026-11-22）：`Store.Resume` 在续接前补齐 `interruptedTurnClosers`（未应答 `tool/call` → `TOOL_OUTCOME_UNKNOWN`、未发起 → `TOOL_NOT_STARTED`、补 `step/end`、补 `turn/end{interrupted}`）；同会话 turn 租约、`Load` 校验 header id、会话日志 BOM 容忍（含 `RepairTail` 不误截断）；`tool.Result.Code` 五个错误码；取消语义与 SIGINT=130 / SIGTERM=0（原因字面量在批次 8 由 `cancelled` 修正为上游的 `aborted`）。记录见 [T-0018](tasks/T-0018-crash-recovery.md)。
 - 可运维性（批次 8，2026-11-22）：`llm.Failure` 失败分类（`AUTH`/`RATE_LIMIT`/`QUOTA`/`CONTEXT_WINDOW_EXCEEDED`/`INVALID_REQUEST`/`SERVER`/`TIMEOUT`/`TRANSPORT`/`ABORTED`/`EMPTY_RESPONSE`/`MISSING_CREDENTIAL`/`HTTP_<n>`）+ `RetryPolicy` 退避重试（`llm/retry` → 等待 → `llm/retry-started` 先落盘；已输出分片不重试）；两层 `.env`（项目 + 数据目录，拒绝引导变量）；`logFile` 日志文件与 `Full diagnostics:` 启动报告；内核 `Bail`/`Serial`/`Parallel`/`Waterfall` 四种分发模式并让 `tools/pre-execute` 成为真实消费者；`turn/end` 对齐上游（`aborted` + `error{message,code}` + `max-tokens`）。记录见 [T-0021](tasks/T-0021-operability-batch.md) 与 [D-0009](decisions/D-0009-operability-batch.md)。
+- 会话管理（批次 9，2026-11-22）：`dsh sessions`（列表/详情/`--json`，含最后 turn 结果）；`maxTokens`/`contextWindow` 真正生效（请求体与 `request/context`）；`todo/write` 与 `working-directory/change` 落盘并在续接时恢复（只读 `Store.Recording`，目录缺失退回根）；取消时保留已流式输出的前缀（`assistant/message` 先于 `turn/end{aborted}`）。记录见 [T-0023](tasks/T-0023-batch9-sessions-and-state.md)。
 - 文档同步机制（2026-11-21）：用户要求"文档随实现并行更新"→ [D-0008](decisions/D-0008-docs-in-sync.md)；重写 README（11 工具 / v4 / 流式 / profiles / 批次并发），新增 `cmd/dsh/docs_test.go` 把 **命令清单、工具表、配置示例** 钉成测试（负向验证过），AGENTS.md §1.14 规定改动↔文档对照表，CI 增加 Markdown 链接校验。记录见 [T-0017](tasks/T-0017-docs-in-sync.md)。
 
 ## 进行中
@@ -69,7 +70,8 @@
   - **批次 7 已完成**（[T-0020](tasks/T-0020-durability-lock.md)）：B-09 fsync 屏障、B-10 跨进程单写者锁。
   - **批次 8 已完成**（[T-0021](tasks/T-0021-operability-batch.md)）：B-27 失败分类与重试、B-28 两层 `.env`、B-29 日志与启动诊断、B-30 内核分发模式。**P1 收口完成。**
   - **P2 盘点与排序完成**（[T-0022](tasks/T-0022-p2-backlog-and-priorities.md)）：代码侧 P0/P1 清零，仅剩验证类 B-14（上游读取器验证 Go 日志）；P2 已排成 15 项有序表（[BACKLOG](BACKLOG.md)），第一批建议 B-35 + B-31 + B-32 + B-34。
-  - **下一批（批次 9）**：小件批 B-35（`contextWindow`/`maxTokens`）+ B-31（todo/wd 落盘）+ B-32（`dsh sessions`）+ B-34（取消保留已输出前缀），约半天。
+  - **批次 9 已完成**（[T-0023](tasks/T-0023-batch9-sessions-and-state.md)）：B-35 模型上限、B-31 todo/工作目录落盘与恢复、B-32 `dsh sessions`、B-34 取消保留已输出前缀。
+  - **下一批（批次 10）**：B-14 反向互操作验证 + B-40 staticcheck 进 CI + B-43 假端点重试回归，约半天。
   - 决策项：B-11 zstd 读取（依赖）、B-12 Web 鉴权（阻塞 B-33）。
 
 ## 决策队列（与会话内表格同源）
@@ -96,6 +98,15 @@
 | Q-0015 | 批次 8 之后进入 P2，先做哪条？ | A. `fs`/`shell` seam（B-20，架构优先）/ B. 沙箱三模式（B-21，安全优先）/ C. `dsh sessions` + Web 会话列表（B-32/B-33，用户可见）/ D. 先做 B-11 zstd 决策（能否读安装版历史会话） | A | **已由用户授权代理拍板**：先做小件（B-35/B-31/B-32/B-34）→ compaction（B-24）→ seam → 沙箱 → 审批；替代方案与切换条件见 [T-0022](tasks/T-0022-p2-backlog-and-priorities.md) |
 | Q-0016 | 是否允许为读取上游 `.jsonl.zstd` 引第三方 zstd 依赖（B-11）？ | A. 允许 `klauspost/compress` / B. 自研解码器 / C. 只支持未压缩，不读安装版历史会话 | A（若确需导入上游会话） | 待决策（不阻塞批次 9–12） |
 | Q-0017 | Web 端是否要鉴权（B-12）？ | A. 默认随机 token + 启动时打印 / B. `authorize` 三态（required/anonymous/deny）/ C. 维持只靠 127.0.0.1 绑定 | A | 待决策（**阻塞 B-33**） |
+
+## 最近验证（批次 9，2026-11-22）
+
+- `gofmt -l .` 无输出；`go vet ./...` / `staticcheck ./...` exit 0
+- `go test ./... -count=1` → 11 个有测试的包全部 ok，**268 个用例**（批次 8 时为 249）
+- **真实 DeepSeek API（状态落盘）**：一轮内模型调用 `todo_write` + `working_directory`，exit 0；日志含 `request/context{contextWindow:65536}`、`todo/write{turn:1,step:1,todos:[…]}`、`working-directory/change{turn:1,step:2,directory:"sub"}`
+- **真实续接（新进程）**：`--session` 续接后要求模型查询 `working_directory`，返回 `sub` —— 记录的目录被恢复
+- **`dsh sessions` 实跑**：表格显示 `completed`/`TURNS 1`/`MESSAGES 7`；`--json` 字段完整
+- `scripts/build.ps1` → `bin\dsh.exe`（自报 commit `6483da5`，即本批开始时的 HEAD）
 
 ## 最近验证（批次 8，2026-11-22）
 

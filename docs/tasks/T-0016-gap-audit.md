@@ -23,10 +23,10 @@
 
 | # | 验收标准 | 结论 | 证据 |
 |---|---|---|---|
-| ① | 录制真实会话与上游 JSONL 逐事件比对（字段/seq/surfaceOp） | **部分达标** | 只做了"读上游样本"单向对拍（T-0008：44 行 → header + 43 事件、`seq` 0…42 连续、16 个 `append`）；没有"我们写 → 上游读"的反向验证 |
-| ② | 杀进程后 resume，补齐 `interruptedTurnClosers`，不丢已提交前缀 | **未达标** | 实测：把真实会话截断到 `tool/call` 之后 resume → **DeepSeek HTTP 400**（`An assistant message with 'tool_calls' must be followed by tool messages`）；日志里 `turn/start(2) → user/message → step/start → step/end → turn/end{error}` 直接写在**未闭合的 turn 1** 后面，没有补任何 `tool/result`、`step/end` 或 `turn/end{interrupted}` |
-| ③ | `-race` 下 100 并发会话读写无数据竞争 | **未达标** | 无并发会话用例；`-race` 只在 CI Linux 跑全量单测（本轮新增），没有 100 并发压力用例 |
-| ④ | 会话文件可与上游 v4 读取器互开（只读方向） | **单向达标** | Go 读上游未压缩样本 ✓；上游读 Go 产物未验证 |
+| ① | 录制真实会话与上游 JSONL 逐事件比对（字段/seq/surfaceOp） | **达标**（2026-11-22） | 读方向：上游样本对拍（T-0008）；写方向：`scripts/upstream-scan.mts` 用上游 `scanLog` 读 Go 写出的日志，单轮 22 事件与两轮续接 30 事件均 `scan: ok`、`seq` 连续、字节完全消费（T-0024）。期间发现并修正了 `system/message` 必须在 step 内 的顺序错误 |
+| ② | 杀进程后 resume，补齐 `interruptedTurnClosers`，不丢已提交前缀 | **达标**（T-0018） | 四种截断位置 resume 后真实 API 均接受；崩溃补齐用例 |
+| ③ | `-race` 下 100 并发会话读写无数据竞争 | **达标**（T-0019） | 100 并发会话压测；CI ubuntu 跑 `-race` |
+| ④ | 会话文件可与上游 v4 读取器互开（只读方向） | **达标**（2026-11-22） | 同上 ①：上游读取器能读 Go 产物；Go 能读上游未压缩样本 |
 | ⑤ | 工具超时/截断/错误以 `isError` 回填而非中断循环 | **达标** | `tool.Pipeline` 单测（超时/panic/截断/guard）+ 真实 API 工具调用 |
 
 ## 3. 缺口清单

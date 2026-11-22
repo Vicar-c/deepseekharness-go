@@ -203,6 +203,7 @@ CLI 的 `[tool] write ok 0ms` 就是订阅 `tool/executed` 打印的。
 ```
 
 - 只有 `system/message`、`developer/message`、`user/message`、`assistant/message`、`tool/result` 是 surface 事件（带 `surfaceOp`），其余是不进模型历史的记录事件；
+- **顺序约束（上游读取器强制）**：`system/message` 与 `developer/message` 必须位于已打开的 `step` 内，且首个 surface 事件必须是 `system/message`；所以系统提示与用户消息都写在**第一个 step 内**（`turn/start → step/start → system/message → user/message → request/header → …`）。写成"turn/start 之后、step/start 之前"会被上游以 `does not match an open turn and step` 拒绝（T-0024）；
 - `system/message` 在会话首轮写一次（模型可见的系统提示必须可重建）；`request/header` 与 `request/context` 是记录事件，分别存请求信封（含工具 schema）与路由元信息；
 - **读者不修盘**：`Load` 只读"已提交前缀"（尾部不完整或坏行在内存里丢弃），磁盘修复（`RepairTail`）只在写路径（`Resume` / `OpenWriter`）发生 —— 否则读者会截断写者正在写的行；
 - 未知事件类型必须带 `ignorable:true`，否则读取端拒绝（前向兼容的安全阀）；
@@ -212,7 +213,8 @@ CLI 的 `[tool] write ok 0ms` 就是订阅 `tool/executed` 打印的。
 - **轮次结束原因**：`completed`、`error`（带完整失败对象）、`aborted`（用户取消，带 `reason:{kind:"user"}`）、`max-tokens`（输出被上限截断）、`interrupted`（崩溃补齐）；
 - **状态记录事件**：`todo/write`（完整 todo 列表）与 `working-directory/change`（root 相对路径）由工具通过 `Result.State` 产生，loop 补 `turn`/`step` 后落盘；续接会话时 `Store.Recording` 只读地回放这两类事件，把状态恢复到进程内的 `TodoStore` / `Workspace`（目录已被删除时退回工作区根，不阻断续接）；
 - **`dsh sessions`** 用同一个只读路径列出会话：`turn/end` 原因与事件数来自日志，`messages` 来自投影；`--json` 输出同一结构；
-- 细节与夹具出处见 [T-0008](tasks/T-0008-session-v4-format-layer.md)、[T-0009](tasks/T-0009-session-v4-projection-and-writer.md)、[T-0010](tasks/T-0010-session-v4-wiring.md)、[T-0018](tasks/T-0018-crash-recovery.md)、[T-0023](tasks/T-0023-batch9-sessions-and-state.md)。
+- **上游读取器验证**：`scripts/upstream-scan.mts` 用上游自己的 `scanLog` 读 Go 写出的日志（`node --experimental-transform-types scripts/upstream-scan.mts <上游checkout> <session.jsonl>`）。它只做手工验证，不进 CI（CI 没有参考源码），但 `TestLoopPersistsV4EventStream` 把顺序钉成回归；
+- 细节与夹具出处见 [T-0008](tasks/T-0008-session-v4-format-layer.md)、[T-0009](tasks/T-0009-session-v4-projection-and-writer.md)、[T-0010](tasks/T-0010-session-v4-wiring.md)、[T-0018](tasks/T-0018-crash-recovery.md)、[T-0023](tasks/T-0023-batch9-sessions-and-state.md)、[T-0024](tasks/T-0024-batch10-upstream-verification.md)。
 
 ## 8. HTTP API
 

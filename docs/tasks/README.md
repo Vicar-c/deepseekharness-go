@@ -37,6 +37,7 @@
 | [T-0021](T-0021-operability-batch.md) | 批次 8：失败分类与重试、`.env`、日志与诊断、内核分发模式 | done | 2026-11-22 | D-0002、D-0007、D-0009 |
 | [T-0022](T-0022-p2-backlog-and-priorities.md) | P2 完整盘点与优先级拍板（含 P1 残余 B-14） | done | 2026-11-22 | D-0002、D-0008 |
 | [T-0023](T-0023-batch9-sessions-and-state.md) | 批次 9：会话管理、状态恢复与取消保留前缀 | done | 2026-11-22 | D-0002、D-0007 |
+| [T-0024](T-0024-batch10-upstream-verification.md) | 批次 10：上游读取器验证、staticcheck 与重试回归入 CI | done | 2026-11-22 | D-0002、D-0007 |
 
 ## 新建任务步骤
 

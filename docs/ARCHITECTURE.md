@@ -180,7 +180,7 @@ CLI 的 `[tool] write ok 0ms` 就是订阅 `tool/executed` 打印的。
 - **读者不修盘**：`Load` 只读"已提交前缀"（尾部不完整或坏行在内存里丢弃），磁盘修复（`RepairTail`）只在写路径（`Resume` / `OpenWriter`）发生 —— 否则读者会截断写者正在写的行；
 - 未知事件类型必须带 `ignorable:true`，否则读取端拒绝（前向兼容的安全阀）；
 - `Recording.Project()` 把 surface 事件投影成模型消息（含 `replace` 语义与工具名反查）；
-- 写入器保证原子创建、`seq` 续写、进程内单写者与崩溃尾部修复；
+- 写入器保证原子创建、`seq` 续写与崩溃尾部修复；**同一会话只有一个写者**——进程内用占位表，跨进程用 sidecar 锁文件（`<id>.jsonl.lock`，POSIX `flock` / Windows `LockFileEx`，进程退出由内核释放）；`step/end` 与 `turn/end` 之后 `fsync`，掉电最多丢当前 step；
 - **崩溃恢复**：日志若以打开的 `turn/start` 结束，`Store.Resume` 会在发布会话前补一批普通事件 —— 未应答的 `tool/call` 补 `TOOL_OUTCOME_UNKNOWN`、模型要过但没发起的补 `TOOL_NOT_STARTED`、补 `step/end`、补合成的 `turn/end{interrupted}`。`Store.Load` 保持只读，Web 的会话查看不会改日志；
 - **轮次结束原因**：循环自己只发 `completed` / `error`；用户取消是 `cancelled`，恢复补齐的是 `interrupted`；
 - 细节与夹具出处见 [T-0008](tasks/T-0008-session-v4-format-layer.md)、[T-0009](tasks/T-0009-session-v4-projection-and-writer.md)、[T-0010](tasks/T-0010-session-v4-wiring.md)、[T-0018](tasks/T-0018-crash-recovery.md)。

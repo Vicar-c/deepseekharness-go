@@ -11,10 +11,8 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/Vicar-c/deepseekharness-go/internal/agent"
@@ -337,13 +335,13 @@ func runWeb(args []string, stdout, stderr io.Writer) int {
 	address := net.JoinHostPort(*host, strconv.Itoa(*port))
 	fmt.Fprintf(stdout, "dsh web: http://%s/\n", address)
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	ctx, signals, stopSignals := newSignalContext()
+	defer stopSignals()
 	if err := srv.Run(ctx, address); err != nil {
 		fmt.Fprintf(stderr, "dsh: web: %v\n", err)
-		return 1
+		return failureCode(signals)
 	}
-	return 0
+	return signals.exitCode()
 }
 
 func runChat(args []string, stdout, stderr io.Writer) int {
@@ -377,7 +375,8 @@ func runChat(args []string, stdout, stderr io.Writer) int {
 
 	var sess *session.Session
 	if strings.TrimSpace(*sessionID) != "" {
-		sess, err = rt.store.Load(*sessionID)
+		// Resume repairs a turn a crash left open before the new turn starts.
+		sess, err = rt.store.Resume(*sessionID)
 	} else {
 		newTitle := strings.TrimSpace(*title)
 		if newTitle == "" {
@@ -419,14 +418,14 @@ func runChat(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stdout, payload.Content)
 	})
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	ctx, signals, stopSignals := newSignalContext()
+	defer stopSignals()
 
 	if *prompt != "" {
 		reply, err := loop.Run(ctx, *prompt)
 		if err != nil {
 			fmt.Fprintf(stderr, "dsh: %v\n", err)
-			return 1
+			return failureCode(signals)
 		}
 		if streamed {
 			fmt.Fprintln(stdout)
@@ -454,6 +453,9 @@ func runChat(args []string, stdout, stderr io.Writer) int {
 		reply, err := loop.Run(ctx, line)
 		if err != nil {
 			fmt.Fprintf(stderr, "dsh: %v\n", err)
+			if signals.signaled() {
+				return failureCode(signals)
+			}
 			continue
 		}
 		if streamed {

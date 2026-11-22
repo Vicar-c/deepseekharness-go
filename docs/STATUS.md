@@ -5,7 +5,7 @@
 
 ## 当前阶段
 
-**P1 单 agent 闭环已全部收口（批次 0–8）；真实 API 与真实浏览器均已验证；下一阶段为 P2（起点待 Q-0015 决策）。**
+**P1 已全部收口（代码侧；仅剩验证类 B-14）；P2 已排成 15 项有序待办，从批次 9 的小件开始。**
 
 项目：DeepSeek Harness（DSH）的 Go 重写实现，运行入口 `cmd/dsh`。
 参考源码：`%USERPROFILE%\Desktop\deepseekharness`（上游 TS 实现，只读）。
@@ -68,8 +68,9 @@
   - **批次 6 已完成**（[T-0019](tasks/T-0019-request-envelope.md)）：B-06 并发压测与读不修盘、B-07 请求信封、B-08 系统提示落盘。
   - **批次 7 已完成**（[T-0020](tasks/T-0020-durability-lock.md)）：B-09 fsync 屏障、B-10 跨进程单写者锁。
   - **批次 8 已完成**（[T-0021](tasks/T-0021-operability-batch.md)）：B-27 失败分类与重试、B-28 两层 `.env`、B-29 日志与启动诊断、B-30 内核分发模式。**P1 收口完成。**
-  - **下一批（批次 9）**：进入 P2，起点见决策 **Q-0015**（沙箱三模式 vs `fs`/`shell` seam，对应 B-13）。
-  - 决策项：B-11 zstd 读取（依赖）、B-12 Web 鉴权、B-13/Q-0015 P2 起点（沙箱 vs seam）。
+  - **P2 盘点与排序完成**（[T-0022](tasks/T-0022-p2-backlog-and-priorities.md)）：代码侧 P0/P1 清零，仅剩验证类 B-14（上游读取器验证 Go 日志）；P2 已排成 15 项有序表（[BACKLOG](BACKLOG.md)），第一批建议 B-35 + B-31 + B-32 + B-34。
+  - **下一批（批次 9）**：小件批 B-35（`contextWindow`/`maxTokens`）+ B-31（todo/wd 落盘）+ B-32（`dsh sessions`）+ B-34（取消保留已输出前缀），约半天。
+  - 决策项：B-11 zstd 读取（依赖）、B-12 Web 鉴权（阻塞 B-33）。
 
 ## 决策队列（与会话内表格同源）
 
@@ -92,7 +93,9 @@
 | Q-0012 | 批次 5 之后做什么？ | A. 批次 6（B-06 并发压测 + B-07 请求信封 + B-08 系统提示）/ B. 批次 6–8 一次授权做完 P1 收口 / C. 只做 B-07（请求信封）/ D. 直接进 P2 | A | **已按 A 完成批次 6**（[T-0019](tasks/T-0019-request-envelope.md)） |
 | Q-0013 | 批次 6 之后做什么？ | A. 批次 7（B-09 fsync/flush + B-10 跨进程单写者锁）/ B. 批次 7–8 一次授权做完 P1 收口 / C. 只做 B-10 / D. 直接进 P2 | A | **已按 A 完成批次 7**（[T-0020](tasks/T-0020-durability-lock.md)） |
 | Q-0014 | 批次 7 之后做什么？ | A. 批次 8（B-27 错误分类 + B-28 `.env` + B-29 日志/诊断 + B-30 内核分发）/ B. 只做 B-10 相关收尾 / C. 直接进 P2 / D. 先做 B-11 zstd 决策 | A | **已按 A 完成批次 8**（[T-0021](tasks/T-0021-operability-batch.md)）；P1 收口 |
-| Q-0015 | 批次 8 之后进入 P2，先做哪条？ | A. `fs`/`shell` seam（B-20，架构优先，后续沙箱/spill 都要它）/ B. 沙箱三模式（B-21，安全优先，需先做 B-20）/ C. `dsh sessions` + Web 会话列表（B-32/B-33，用户可见）/ D. 先做 B-11 zstd 决策（能否读安装版历史会话） | A | 待决策 |
+| Q-0015 | 批次 8 之后进入 P2，先做哪条？ | A. `fs`/`shell` seam（B-20，架构优先）/ B. 沙箱三模式（B-21，安全优先）/ C. `dsh sessions` + Web 会话列表（B-32/B-33，用户可见）/ D. 先做 B-11 zstd 决策（能否读安装版历史会话） | A | **已由用户授权代理拍板**：先做小件（B-35/B-31/B-32/B-34）→ compaction（B-24）→ seam → 沙箱 → 审批；替代方案与切换条件见 [T-0022](tasks/T-0022-p2-backlog-and-priorities.md) |
+| Q-0016 | 是否允许为读取上游 `.jsonl.zstd` 引第三方 zstd 依赖（B-11）？ | A. 允许 `klauspost/compress` / B. 自研解码器 / C. 只支持未压缩，不读安装版历史会话 | A（若确需导入上游会话） | 待决策（不阻塞批次 9–12） |
+| Q-0017 | Web 端是否要鉴权（B-12）？ | A. 默认随机 token + 启动时打印 / B. `authorize` 三态（required/anonymous/deny）/ C. 维持只靠 127.0.0.1 绑定 | A | 待决策（**阻塞 B-33**） |
 
 ## 最近验证（批次 8，2026-11-22）
 

@@ -73,6 +73,49 @@ func (w *Workspace) Resolve(requested string) (absolute string, relative string,
 	return absolute, filepath.ToSlash(relative), nil
 }
 
+// ResetCwd returns the working directory to the workspace root. A session that
+// is starting fresh must not inherit the directory another session moved to.
+func (w *Workspace) ResetCwd() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.cwd = ""
+}
+
+// RestoreCwd applies a root-relative working directory recorded in a session
+// log. Unlike SetCwd the path is resolved against the root rather than the
+// current directory, because a recorded value is already root-relative. A
+// directory that no longer exists is reported with os.ErrNotExist so a caller can
+// fall back to the root instead of refusing to resume the conversation.
+func (w *Workspace) RestoreCwd(relative string) error {
+	relative = strings.TrimSpace(relative)
+	if relative == "" || relative == "." {
+		w.ResetCwd()
+		return nil
+	}
+	if filepath.IsAbs(relative) {
+		return fmt.Errorf("restored path %q must be relative to the workspace", relative)
+	}
+	target := filepath.Join(w.root, relative)
+	cleaned, err := filepath.Rel(w.root, target)
+	if err != nil {
+		return fmt.Errorf("resolve relative path: %w", err)
+	}
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(os.PathSeparator)) {
+		return fmt.Errorf("restored path %q escapes the workspace", relative)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("restored path %q is not a directory", relative)
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.cwd = filepath.ToSlash(cleaned)
+	return nil
+}
+
 // SetCwd moves the working directory used by later tool calls.
 func (w *Workspace) SetCwd(requested string) (string, error) {
 	absolute, relative, err := w.Resolve(requested)

@@ -34,6 +34,29 @@ type Result struct {
 	// session log and the UI need to tell a timeout from a policy rejection
 	// without parsing prose (MIGRATION_MAP §6-8).
 	Code string
+	// State lists session state the call changed outside the conversation, such
+	// as the todo list or the working directory. The loop persists each entry
+	// before the tool result, so a reader can replay that state from the log.
+	State []StateEvent
+}
+
+// StateEvent is one piece of session state a tool produced. The tool chooses the
+// payload; the session log records it verbatim under Type.
+type StateEvent struct {
+	// Type is the session event type, for example "todo/write". It must be part
+	// of the session event vocabulary: the writer refuses an unknown type instead
+	// of writing a log that a reader cannot explain.
+	Type string
+	// Data is the payload. A payload implementing TurnStepSetter receives the
+	// turn and step of the call that produced it before it is persisted.
+	Data any
+}
+
+// TurnStepSetter is implemented by a state payload that needs the turn and step
+// of the call that produced it. The loop fills them in before persisting, because
+// a tool does not know which turn it is running in.
+type TurnStepSetter interface {
+	SetTurnStep(turn, step int)
 }
 
 // Structured error codes carried by tool results and by recovered sessions.

@@ -25,7 +25,22 @@ type TodoItem struct {
 	Status  string `json:"status"`
 }
 
-// TodoStore keeps the current list in memory for the lifetime of the process.
+// TodoWriteData is the payload of the todo/write session event. The tool returns
+// it as state; the loop fills turn and step before persisting it.
+type TodoWriteData struct {
+	Turn  int        `json:"turn"`
+	Step  int        `json:"step"`
+	Todos []TodoItem `json:"todos"`
+}
+
+// SetTurnStep implements tool.TurnStepSetter.
+func (d *TodoWriteData) SetTurnStep(turn, step int) {
+	d.Turn = turn
+	d.Step = step
+}
+
+// TodoStore keeps the current list for the lifetime of the process. The list is
+// restored from the session log when a session is resumed.
 type TodoStore struct {
 	mu    sync.Mutex
 	items []TodoItem
@@ -34,7 +49,15 @@ type TodoStore struct {
 // NewTodoStore creates an empty store.
 func NewTodoStore() *TodoStore { return &TodoStore{} }
 
-func (s *TodoStore) replace(items []TodoItem) []TodoItem {
+// Items returns a copy of the current list.
+func (s *TodoStore) Items() []TodoItem {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]TodoItem(nil), s.items...)
+}
+
+// Replace swaps the whole list and returns the new one.
+func (s *TodoStore) Replace(items []TodoItem) []TodoItem {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.items = append([]TodoItem(nil), items...)
@@ -44,8 +67,17 @@ func (s *TodoStore) replace(items []TodoItem) []TodoItem {
 // TodoPlugin registers the todo list tool.
 type TodoPlugin struct{ store *TodoStore }
 
-// NewTodoPlugin creates the todo plugin.
-func NewTodoPlugin() *TodoPlugin { return &TodoPlugin{store: NewTodoStore()} }
+// NewTodoPlugin creates the todo plugin with its own store.
+func NewTodoPlugin() *TodoPlugin { return NewTodoPluginWithStore(NewTodoStore()) }
+
+// NewTodoPluginWithStore creates the todo plugin around a shared store, which
+// lets the host restore the list from a session log before the tools run.
+func NewTodoPluginWithStore(store *TodoStore) *TodoPlugin {
+	if store == nil {
+		store = NewTodoStore()
+	}
+	return &TodoPlugin{store: store}
+}
 
 // Name implements kernel.Plugin.
 func (*TodoPlugin) Name() string { return "builtin/todo" }
@@ -112,9 +144,10 @@ func (t *todoWriteTool) Execute(ctx context.Context, arguments json.RawMessage) 
 		}
 		args.Todos[index] = item
 	}
-	items := t.store.replace(args.Todos)
+	items := t.store.Replace(args.Todos)
+	state := []tool.StateEvent{{Type: "todo/write", Data: &TodoWriteData{Todos: items}}}
 	if len(items) == 0 {
-		return tool.Result{Content: "todo list cleared"}, nil
+		return tool.Result{Content: "todo list cleared", State: state}, nil
 	}
 	counts := map[string]int{}
 	for _, item := range items {
@@ -135,5 +168,5 @@ func (t *todoWriteTool) Execute(ctx context.Context, arguments json.RawMessage) 
 		builder.WriteString(item.Content)
 		builder.WriteString("\n")
 	}
-	return tool.Result{Content: builder.String()}, nil
+	return tool.Result{Content: builder.String(), State: state}, nil
 }

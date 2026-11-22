@@ -253,5 +253,22 @@ func (t *workingDirectoryTool) Execute(ctx context.Context, arguments json.RawMe
 	if err != nil {
 		return tool.Result{}, err
 	}
-	return tool.Result{Content: fmt.Sprintf("working directory set to %s", relative)}, nil
+	return tool.Result{
+		Content: fmt.Sprintf("working directory set to %s", relative),
+		State:   []tool.StateEvent{{Type: "working-directory/change", Data: &WorkingDirectoryData{Directory: relative}}},
+	}, nil
+}
+
+// WorkingDirectoryData is the payload of the working-directory/change session
+// event. The tool returns it as state; the loop fills turn and step.
+type WorkingDirectoryData struct {
+	Turn      int    `json:"turn"`
+	Step      int    `json:"step"`
+	Directory string `json:"directory"`
+}
+
+// SetTurnStep implements tool.TurnStepSetter.
+func (d *WorkingDirectoryData) SetTurnStep(turn, step int) {
+	d.Turn = turn
+	d.Step = step
 }

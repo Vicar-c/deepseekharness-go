@@ -515,8 +515,14 @@ func turnEndReason(err error, cancelled bool) session.TurnEndReason {
 		code = llm.CodeUnknown
 	}
 	return session.TurnEndReason{
-		Kind:  session.TurnEndError,
-		Error: &session.TurnEndFailure{Message: failure.Message, Code: code},
+		Kind: session.TurnEndError,
+		Error: &session.TurnEndFailure{
+			Message:              failure.Message,
+			Code:                 code,
+			Status:               failure.Status,
+			ProviderRetryAfterMs: failure.ProviderRetryAfterMs,
+			RequestID:            failure.RequestID,
+		},
 	}
 }
 

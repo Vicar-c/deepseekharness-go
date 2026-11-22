@@ -133,7 +133,7 @@ POST /api/chat {sessionId?, input}
 - **请求信封**：`request/header` 自包含（provider/model + 工具 schema），信封不变就沿用上一条，所以一次回复的多个 step 只写一份；新进程续接写 `resume`。
 - **模型失败先分类再重试**：一次失败的模型调用先归一化成 `llm.Failure{code, message, status?, providerRetryAfterMs?, requestId?}`，再由 `RetryPolicy` 决定是否重试（见 §10）。可重试且尚未向用户输出任何分片时，按 `llm/retry` → 等待 → `llm/retry-started` 的顺序重试同一次请求；**已经流出内容分片的尝试不重试**，避免终端/UI 出现重复文本。
 - **消息顺序**：assistant(tool_calls) → 每个 tool 结果（带 `tool_call_id`）→ 下一次请求，符合 OpenAI/DeepSeek 协议。
-- **`turn/end` 记录结构化原因**：`completed`、`error`（带 `error:{message,code}`）、`aborted`（带 `reason:{kind:"user"}`）、`max-tokens`（模型输出被 token 上限截断）；崩溃补齐的轮次写 `interrupted`。
+- **`turn/end` 记录结构化原因**：`completed`、`error`（带完整 `LlmFailure`：`error:{message,code,status?,providerRetryAfterMs?,requestId?}`）、`aborted`（带 `reason:{kind:"user"}`）、`max-tokens`（模型输出被 token 上限截断）；崩溃补齐的轮次写 `interrupted`。
 
 ## 5. 工具执行流水线
 

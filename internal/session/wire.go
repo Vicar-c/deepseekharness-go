@@ -137,12 +137,15 @@ type TurnEndReason struct {
 	Reason *TurnEndCancelCause `json:"reason,omitempty"`
 }
 
-// TurnEndFailure is the structured failure a failed turn records: the provider
-// neutral code and the rendered message. The upstream type is the same
-// LlmFailure object an llm/retry event carries.
+// TurnEndFailure is the structured failure a failed turn records. The upstream
+// type is the same LlmFailure object an llm/retry event carries, so the provider
+// facts (status, requested delay, request id) survive next to the code.
 type TurnEndFailure struct {
-	Message string `json:"message"`
-	Code    string `json:"code"`
+	Message              string `json:"message"`
+	Code                 string `json:"code"`
+	Status               int    `json:"status,omitempty"`
+	ProviderRetryAfterMs int64  `json:"providerRetryAfterMs,omitempty"`
+	RequestID            string `json:"requestId,omitempty"`
 }
 
 // TurnEndCancelCause names why a turn was cancelled.

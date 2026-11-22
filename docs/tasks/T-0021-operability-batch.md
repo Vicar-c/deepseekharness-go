@@ -36,7 +36,7 @@
 1. **失败分类**（`llm.Failure`）：`{message, code, status?, providerRetryAfterMs?, requestId?}`，字段名与上游 `LlmFailure` 相同。规则按上游 `transport.ts` 顺序移植：`AUTH` → `QUOTA` → `RATE_LIMIT` → `CONTEXT_WINDOW_EXCEEDED` → `INVALID_REQUEST` → `SERVER` → `HTTP_<status>`；流内错误帧无状态码时落 `SERVER`。上下文溢出与配额用**明确措辞**正则识别（8 条正例 / 5 条反例锁定）。`Classify` 还会把 `context.Canceled`/`DeadlineExceeded`/网络错误/空响应分别归一成 `ABORTED`/`TIMEOUT`/`TRANSPORT`/`EMPTY_RESPONSE`。
 2. **重试策略**（`llm.RetryPolicy`）：默认 normal、5 次、500ms 起、10s 上限、±10% 抖动，可重试码 `EMPTY_RESPONSE`/`RATE_LIMIT`/`SERVER`/`TIMEOUT`/`TRANSPORT`；`always` 模式用于"重排到成功或取消"。`Retry-After`（秒或 HTTP date）优先，超过上限时 normal 放弃、always 退回本地退避。`policyKey` 用与上游相同的 JSON 数组形态（可重试码排序后），所以同一策略永远同一个键。
 3. **重试落盘顺序**：`llm/retry`（等待前）→ 可取消等待 → `llm/retry-started`。取消发生在等待中时本轮记 `aborted`。**已输出分片的尝试不重试**（D-0009-03）。
-4. **`turn/end` 结构化**：`completed` / `error{message,code}` / `aborted{reason:{kind:"user"}}` / `max-tokens`（`finish_reason == "length"`）/ `interrupted`（崩溃补齐，既有）；`blocked`/`forked` 只登记常量。
+4. **`turn/end` 结构化**：`completed` / `error`（携带完整失败对象：`message`、`code`，以及有值时的 `status`/`providerRetryAfterMs`/`requestId`）/ `aborted{reason:{kind:"user"}}` / `max-tokens`（`finish_reason == "length"`）/ `interrupted`（崩溃补齐，既有）；`blocked`/`forked` 只登记常量。
 5. **`.env` 两层**：`LoadEnvLayers` 先解析两层、校验引导变量，再统一应用；项目层 `<cwd>/.env`、数据层 `<HomeDir>/.env`；cwd 与数据目录相同时只读一次并按数据层规则豁免。解析器支持 `export`、单/双引号、`\n`/`\t`/`\"`/`\\`、注释、CRLF、BOM、空值、重复键（后者覆盖前者位置不变）。
 6. **日志**：`slog` 同时写 stderr 与 `logFile`（默认 `<数据目录>/logs/dsh.log`，`off` 关闭）；打不开只告警。`newLogger` 返回关闭函数，四个子命令 `defer` 它。
 7. **启动诊断**：`reportStartupFailure` 打印原因 → 写 `<数据目录>/logs/startup-<时间戳>-<随机>.log`（目录 0700、文件 0600）→ 打印 `Full diagnostics: <path>`；写失败时把报告正文打到 stderr。报告含时间、版本、Go 版本、平台、profile、home、config 路径、完整错误，并带上游同款"可能含敏感值"警告。

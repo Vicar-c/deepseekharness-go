@@ -236,6 +236,11 @@ func TestLoopDoesNotRetryAHopelessFailure(t *testing.T) {
 	if end.Reason.Error == nil || end.Reason.Error.Code != llm.CodeAuth {
 		t.Fatalf("turn end error = %+v, want code AUTH", end.Reason.Error)
 	}
+	// The provider facts travel with the code: a status is what a reader needs to
+	// tell a rejected key from a rejected request body.
+	if end.Reason.Error.Status != 401 {
+		t.Fatalf("turn end error status = %d, want 401", end.Reason.Error.Status)
+	}
 }
 
 // TestLoopStopsWhenRetriesAreExhausted proves the bound is honoured.

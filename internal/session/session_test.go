@@ -1,6 +1,7 @@
 package session_test
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,5 +112,61 @@ func TestStoreTruncatesLongTitle(t *testing.T) {
 	}
 	if len(sess.Title) != 120 {
 		t.Fatalf("title length = %d, want 120", len(sess.Title))
+	}
+}
+
+// TestRecordingReadsWithoutRepairing is the read path B-31 restores from: it must
+// tolerate a torn trailing record without truncating the file a writer may own.
+func TestRecordingReadsWithoutRepairing(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
+	sess, err := store.Create("recording")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	todo := map[string]any{"turn": 1, "step": 1, "todos": []any{map[string]any{"content": "x", "status": "pending"}}}
+	if err := store.AppendEvent(sess, "todo/write", todo, nil, nil); err != nil {
+		t.Fatalf("AppendEvent: %v", err)
+	}
+	path := filepath.Join(store.Dir(), sess.ID+".jsonl")
+	// A crash can leave a partial line without its newline.
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := file.WriteString(`{"type":"todo/write","data":{`); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	recording, err := store.Recording(sess.ID)
+	if err != nil {
+		t.Fatalf("Recording: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("Recording repaired the log: %d bytes before, %d after", len(before), len(after))
+	}
+	var found bool
+	for _, event := range recording.Events {
+		if event.Type == "todo/write" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("Recording did not return the committed todo/write event")
+	}
+
+	if _, err := store.Recording("missing-session"); err == nil {
+		t.Fatal("expected a missing session to be reported")
 	}
 }

@@ -48,6 +48,9 @@ type Options struct {
 	Provider string
 	// ContextWindow is the route's advertised context size, when known.
 	ContextWindow int
+	// MaxTokens bounds the completion length of one model call. Zero leaves the
+	// provider default in place.
+	MaxTokens int
 	// MaxParallelToolCalls bounds the overlap of concurrency-safe tool calls in
 	// one model step. Zero uses the tool pipeline default (10); 1 forces serial.
 	MaxParallelToolCalls int
@@ -209,16 +212,26 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 		}
 		openStep = iteration
 		request := llm.Request{
-			Model:    l.opts.Model,
-			Messages: l.messages(),
-			Tools:    l.definitions,
+			Model:     l.opts.Model,
+			Messages:  l.messages(),
+			Tools:     l.definitions,
+			MaxTokens: l.opts.MaxTokens,
 		}
 		if err := l.recordEnvelope(turn, iteration, request); err != nil {
 			return "", err
 		}
-		response, err := l.chatWithRetry(ctx, turn, iteration, request)
+		response, partial, err := l.chatWithRetry(ctx, turn, iteration, request)
 		if err != nil {
 			cancelled = errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled)
+			// Text the user already saw belongs in the log even though the turn
+			// failed: otherwise the next request claims the model said nothing,
+			// while the screen shows a half answer.
+			if cancelled && strings.TrimSpace(partial) != "" {
+				if recordErr := l.recordPartialAnswer(turn, iteration, partial); recordErr != nil {
+					lastErr = errors.Join(fmt.Errorf("agent: model call: %w", err), recordErr)
+					break
+				}
+			}
 			lastErr = fmt.Errorf("agent: model call: %w", err)
 			break
 		}
@@ -274,6 +287,17 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 		results := l.opts.Pipeline.ExecuteBatch(ctx, batch, l.opts.MaxParallelToolCalls)
 		for index, call := range response.Message.ToolCalls {
 			result := results[index]
+			// State a tool changed outside the conversation is recorded before its
+			// result, so replaying the log applies the same state a reader expects
+			// and the ordering is deterministic regardless of batch concurrency.
+			for _, state := range result.State {
+				if setter, ok := state.Data.(tool.TurnStepSetter); ok {
+					setter.SetTurnStep(turn, iteration)
+				}
+				if err := l.record(state.Type, state.Data); err != nil {
+					return "", err
+				}
+			}
 			message := llm.ToolResultMessage(call.ID, call.Function.Name, result.Content)
 			data := session.ToolResultData{
 				Turn:    turn,
@@ -324,25 +348,27 @@ const finishReasonLength = "length"
 // marks the attempt that follows.
 //
 // An attempt that already streamed a chunk is not repeated, because the deltas
-// have been shown to the user and the event bus cannot take them back.
-func (l *Loop) chatWithRetry(ctx context.Context, turn, step int, request llm.Request) (llm.Response, error) {
+// have been shown to the user and the event bus cannot take them back. The
+// partial text of a failed attempt is returned so the caller can record what the
+// user actually saw.
+func (l *Loop) chatWithRetry(ctx context.Context, turn, step int, request llm.Request) (llm.Response, string, error) {
 	policy := l.opts.RetryPolicy
 	if policy == nil {
 		policy = llm.DefaultRetryPolicy()
 	}
 	retryID := ""
 	for retry := 0; ; retry++ {
-		response, chunks, err := l.chat(ctx, request)
+		attempt, err := l.chat(ctx, request)
 		if err == nil {
-			return response, nil
+			return attempt.response, "", nil
 		}
 		failure := llm.Classify(err)
-		if ctx.Err() != nil || chunks > 0 || !policy.Retryable(failure.Code) || policy.Exhausted(retry) {
-			return llm.Response{}, err
+		if ctx.Err() != nil || attempt.chunks > 0 || !policy.Retryable(failure.Code) || policy.Exhausted(retry) {
+			return llm.Response{}, attempt.text, err
 		}
 		delay, ok := policy.Delay(retry+1, failure.RetryAfter(), l.opts.Random)
 		if !ok {
-			return llm.Response{}, err
+			return llm.Response{}, attempt.text, err
 		}
 		if retryID == "" {
 			retryID = newRetryID()
@@ -362,7 +388,7 @@ func (l *Loop) chatWithRetry(ctx context.Context, turn, step int, request llm.Re
 			data.MaxRetries = policy.MaxRetries
 		}
 		if err := l.record("llm/retry", data); err != nil {
-			return llm.Response{}, err
+			return llm.Response{}, attempt.text, err
 		}
 		l.emit(EventAgentRetry, RetryEvent{
 			SessionID:  l.opts.Session.ID,
@@ -375,7 +401,7 @@ func (l *Loop) chatWithRetry(ctx context.Context, turn, step int, request llm.Re
 			Delay:      delay,
 		})
 		if err := sleepContext(ctx, delay); err != nil {
-			return llm.Response{}, err
+			return llm.Response{}, attempt.text, err
 		}
 		if err := l.record("llm/retry-started", retryStartedData{
 			RetryID: retryID,
@@ -383,7 +409,7 @@ func (l *Loop) chatWithRetry(ctx context.Context, turn, step int, request llm.Re
 			Step:    step,
 			Retry:   retry + 1,
 		}); err != nil {
-			return llm.Response{}, err
+			return llm.Response{}, attempt.text, err
 		}
 	}
 }
@@ -413,23 +439,34 @@ func newRetryID() string {
 	return "retry-" + hex.EncodeToString(random)
 }
 
+// attempt is the outcome of one model call: the assembled response plus what
+// already reached the user, so a failed attempt can be recorded honestly.
+type attempt struct {
+	response llm.Response
+	text     string
+	chunks   int
+}
+
 // chat calls the model, streaming deltas to the event bus when the client
 // supports it and falling back to one blocking call otherwise. Both paths return
 // the same fully assembled response; the chunk count tells the retry logic
-// whether the attempt already reached the user.
-func (l *Loop) chat(ctx context.Context, request llm.Request) (llm.Response, int, error) {
+// whether the attempt already reached the user, and the text is the prefix the
+// user saw.
+func (l *Loop) chat(ctx context.Context, request llm.Request) (attempt, error) {
 	streaming, ok := l.opts.Client.(llm.StreamingClient)
 	if !ok {
 		response, err := l.opts.Client.Chat(ctx, request)
-		return response, 0, err
+		return attempt{response: response}, err
 	}
-	chunks := 0
+	var output strings.Builder
+	outcome := attempt{}
 	response, err := streaming.ChatStream(ctx, request, func(chunk llm.Chunk) error {
 		if chunk.Content == "" && chunk.ToolCallID == "" && chunk.ToolName == "" &&
 			chunk.ToolArgs == "" && chunk.FinishReason == "" {
 			return nil
 		}
-		chunks++
+		outcome.chunks++
+		output.WriteString(chunk.Content)
 		l.emit(EventAgentStream, StreamEvent{
 			SessionID:    l.opts.Session.ID,
 			Content:      chunk.Content,
@@ -440,7 +477,23 @@ func (l *Loop) chat(ctx context.Context, request llm.Request) (llm.Response, int
 		})
 		return nil
 	})
-	return response, chunks, err
+	outcome.response = response
+	outcome.text = output.String()
+	return outcome, err
+}
+
+// recordPartialAnswer persists the prefix of an answer the user already saw
+// before the turn was cancelled, so the log explains the text on screen and the
+// next request does not pretend the model said nothing.
+func (l *Loop) recordPartialAnswer(turn, step int, text string) error {
+	message := llm.TextMessage(llm.RoleAssistant, text)
+	data := session.AssistantMessageData{
+		Turn:    turn,
+		Step:    step,
+		Message: session.NewAssistantMessage(message),
+		Stream:  []any{},
+	}
+	return l.appendSurface("assistant/message", data, message)
 }
 
 // record persists one log-only event. Without a store the loop stays in memory.

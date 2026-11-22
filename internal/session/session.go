@@ -345,6 +345,23 @@ func (s *Store) Load(id string) (*Session, error) {
 	}, nil
 }
 
+// Recording reads one stored session log without opening a writer or repairing
+// it. It is the read path for state that lives outside the message projection,
+// such as the todo list or the working directory, and never changes the file.
+func (s *Store) Recording(id string) (*Recording, error) {
+	if !idPattern.MatchString(id) {
+		return nil, fmt.Errorf("session: invalid id %q", id)
+	}
+	path := s.path(id)
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("session: %s not found", id)
+		}
+		return nil, fmt.Errorf("session: open %s: %w", path, err)
+	}
+	return readRecordingLenient(path)
+}
+
 // List returns every stored session summary, newest first.
 func (s *Store) List() ([]Summary, error) {
 	entries, err := os.ReadDir(s.dir)

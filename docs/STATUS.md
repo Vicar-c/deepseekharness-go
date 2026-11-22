@@ -1,11 +1,11 @@
 # 项目状态（跨会话第一入口）
 
 > 更新规则：**每次会话结束前必须更新本文件**。任何 Agent/人接手项目，先读本文件，再读相关任务与决策记录。
-> 最后更新：2026-11-21 · 维护者：lead agent（root）
+> 最后更新：2026-11-22 · 维护者：lead agent（root）
 
 ## 当前阶段
 
-**P1 单 agent 闭环已完成主体（批次 0–4）；真实 API 与真实浏览器均已验证。**
+**P1 单 agent 闭环已全部收口（批次 0–8）；真实 API 与真实浏览器均已验证；下一阶段为 P2（起点待 Q-0015 决策）。**
 
 项目：DeepSeek Harness（DSH）的 Go 重写实现，运行入口 `cmd/dsh`。
 参考源码：`%USERPROFILE%\Desktop\deepseekharness`（上游 TS 实现，只读）。
@@ -52,7 +52,9 @@
 - 差距审计（2026-11-21）：重读全部代码与文档，对照 P1 范围/验收与 §6 兼容性条目，实跑 CLI 与真实 API 复现崩溃恢复；**P1 验收 ②（resume 补齐）与 ③（并发会话压测）实测未达标**，另有请求信封、系统提示落盘、fsync 屏障、跨进程锁、LLM 错误分类等缺口。记录见 [T-0016](tasks/T-0016-gap-audit.md)。
 - 持久化硬化（批次 7，2026-11-22）：跨进程单写者锁（POSIX `flock` / Windows `LockFileEx`，sidecar `<id>.jsonl.lock`，崩溃自动释放）+ `step/end`、`turn/end` 后 fsync（`Store.Flush`、`SyncCount`）；`Resume` 改为先取写者再修尾部。记录见 [T-0020](tasks/T-0020-durability-lock.md)。
 - 请求信封与系统提示（批次 6，2026-11-22）：`request/header`（自包含：provider/model + 工具 schema，按指纹去重，`initial`/`resume`/`change` 原因）+ `request/context`，`system/message` 作为 surface 事件在会话首轮写一次；新增 `internal/prompt` 做静态组装；`Load` 改为只读（不再修盘）。100 并发会话压测 + 读不修盘修正。记录见 [T-0019](tasks/T-0019-request-envelope.md)。
-- 崩溃恢复与取消语义（批次 5，2026-11-22）：`Store.Resume` 在续接前补齐 `interruptedTurnClosers`（未应答 `tool/call` → `TOOL_OUTCOME_UNKNOWN`、未发起 → `TOOL_NOT_STARTED`、补 `step/end`、补 `turn/end{interrupted}`）；同会话 turn 租约、`Load` 校验 header id、会话日志 BOM 容忍（含 `RepairTail` 不误截断）；`tool.Result.Code` 五个错误码；`turn/end{cancelled}` 与 SIGINT=130 / SIGTERM=0。记录见 [T-0018](tasks/T-0018-crash-recovery.md)。`n- 文档同步机制（2026-11-21）：用户要求"文档随实现并行更新"→ [D-0008](decisions/D-0008-docs-in-sync.md)；重写 README（11 工具 / v4 / 流式 / profiles / 批次并发），新增 `cmd/dsh/docs_test.go` 把 **命令清单、工具表、配置示例** 钉成测试（负向验证过），AGENTS.md §1.14 规定改动↔文档对照表，CI 增加 Markdown 链接校验。记录见 [T-0017](tasks/T-0017-docs-in-sync.md)。
+- 崩溃恢复与取消语义（批次 5，2026-11-22）：`Store.Resume` 在续接前补齐 `interruptedTurnClosers`（未应答 `tool/call` → `TOOL_OUTCOME_UNKNOWN`、未发起 → `TOOL_NOT_STARTED`、补 `step/end`、补 `turn/end{interrupted}`）；同会话 turn 租约、`Load` 校验 header id、会话日志 BOM 容忍（含 `RepairTail` 不误截断）；`tool.Result.Code` 五个错误码；取消语义与 SIGINT=130 / SIGTERM=0（原因字面量在批次 8 由 `cancelled` 修正为上游的 `aborted`）。记录见 [T-0018](tasks/T-0018-crash-recovery.md)。
+- 可运维性（批次 8，2026-11-22）：`llm.Failure` 失败分类（`AUTH`/`RATE_LIMIT`/`QUOTA`/`CONTEXT_WINDOW_EXCEEDED`/`INVALID_REQUEST`/`SERVER`/`TIMEOUT`/`TRANSPORT`/`ABORTED`/`EMPTY_RESPONSE`/`MISSING_CREDENTIAL`/`HTTP_<n>`）+ `RetryPolicy` 退避重试（`llm/retry` → 等待 → `llm/retry-started` 先落盘；已输出分片不重试）；两层 `.env`（项目 + 数据目录，拒绝引导变量）；`logFile` 日志文件与 `Full diagnostics:` 启动报告；内核 `Bail`/`Serial`/`Parallel`/`Waterfall` 四种分发模式并让 `tools/pre-execute` 成为真实消费者；`turn/end` 对齐上游（`aborted` + `error{message,code}` + `max-tokens`）。记录见 [T-0021](tasks/T-0021-operability-batch.md) 与 [D-0009](decisions/D-0009-operability-batch.md)。
+- 文档同步机制（2026-11-21）：用户要求"文档随实现并行更新"→ [D-0008](decisions/D-0008-docs-in-sync.md)；重写 README（11 工具 / v4 / 流式 / profiles / 批次并发），新增 `cmd/dsh/docs_test.go` 把 **命令清单、工具表、配置示例** 钉成测试（负向验证过），AGENTS.md §1.14 规定改动↔文档对照表，CI 增加 Markdown 链接校验。记录见 [T-0017](tasks/T-0017-docs-in-sync.md)。
 
 ## 进行中
 
@@ -65,8 +67,9 @@
   - **批次 5 已完成**（[T-0018](tasks/T-0018-crash-recovery.md)）：B-01 崩溃恢复、B-02 互斥/id 校验、B-03 BOM、B-04 错误码、B-05 取消语义与信号。
   - **批次 6 已完成**（[T-0019](tasks/T-0019-request-envelope.md)）：B-06 并发压测与读不修盘、B-07 请求信封、B-08 系统提示落盘。
   - **批次 7 已完成**（[T-0020](tasks/T-0020-durability-lock.md)）：B-09 fsync 屏障、B-10 跨进程单写者锁。
-  - **下一批（批次 8）**：B-27 LLM 错误分类、B-28 `.env`/`DSH_PERMISSION_MODE`、B-29 日志与启动诊断、B-30 内核分发模式 —— 见决策 **Q-0014**。
-  - 决策项：B-11 zstd 读取（依赖）、B-12 Web 鉴权、B-13 P2 起点（沙箱 vs seam）。
+  - **批次 8 已完成**（[T-0021](tasks/T-0021-operability-batch.md)）：B-27 失败分类与重试、B-28 两层 `.env`、B-29 日志与启动诊断、B-30 内核分发模式。**P1 收口完成。**
+  - **下一批（批次 9）**：进入 P2，起点见决策 **Q-0015**（沙箱三模式 vs `fs`/`shell` seam，对应 B-13）。
+  - 决策项：B-11 zstd 读取（依赖）、B-12 Web 鉴权、B-13/Q-0015 P2 起点（沙箱 vs seam）。
 
 ## 决策队列（与会话内表格同源）
 
@@ -88,7 +91,19 @@
 | Q-0011 | 差距审计后先做哪一项？ | A. [BACKLOG](BACKLOG.md) 批次 5（P0：B-01 崩溃恢复 + B-02 互斥/id 校验 + B-03 BOM，带 B-04/B-05）/ B. 批次 5–8 一次授权全部 P1 收口 / C. 只做 B-01 / D. 直接进 P2 | A | **已按 A 完成批次 5**（[T-0018](tasks/T-0018-crash-recovery.md)）；下一批见 Q-0012 |
 | Q-0012 | 批次 5 之后做什么？ | A. 批次 6（B-06 并发压测 + B-07 请求信封 + B-08 系统提示）/ B. 批次 6–8 一次授权做完 P1 收口 / C. 只做 B-07（请求信封）/ D. 直接进 P2 | A | **已按 A 完成批次 6**（[T-0019](tasks/T-0019-request-envelope.md)） |
 | Q-0013 | 批次 6 之后做什么？ | A. 批次 7（B-09 fsync/flush + B-10 跨进程单写者锁）/ B. 批次 7–8 一次授权做完 P1 收口 / C. 只做 B-10 / D. 直接进 P2 | A | **已按 A 完成批次 7**（[T-0020](tasks/T-0020-durability-lock.md)） |
-| Q-0014 | 批次 7 之后做什么？ | A. 批次 8（B-27 错误分类 + B-28 `.env` + B-29 日志/诊断 + B-30 内核分发）/ B. 只做 B-10 相关收尾 / C. 直接进 P2 / D. 先做 B-11 zstd 决策 | A | 待决策 |
+| Q-0014 | 批次 7 之后做什么？ | A. 批次 8（B-27 错误分类 + B-28 `.env` + B-29 日志/诊断 + B-30 内核分发）/ B. 只做 B-10 相关收尾 / C. 直接进 P2 / D. 先做 B-11 zstd 决策 | A | **已按 A 完成批次 8**（[T-0021](tasks/T-0021-operability-batch.md)）；P1 收口 |
+| Q-0015 | 批次 8 之后进入 P2，先做哪条？ | A. `fs`/`shell` seam（B-20，架构优先，后续沙箱/spill 都要它）/ B. 沙箱三模式（B-21，安全优先，需先做 B-20）/ C. `dsh sessions` + Web 会话列表（B-32/B-33，用户可见）/ D. 先做 B-11 zstd 决策（能否读安装版历史会话） | A | 待决策 |
+
+## 最近验证（批次 8，2026-11-22）
+
+- `gofmt -l .` 无输出；`go vet ./...` / `staticcheck ./...` exit 0
+- `go test ./... -count=1` → 11 个有测试的包全部 ok，**249 个用例**（批次 7 时为 159）
+- `python scripts/check_md_links.py` → 42 个 md、213 条相对链接、0 缺失
+- **假端点重试端到端**：本地端点前两次 `429 + Retry-After: 1`，第三次 SSE；`dsh chat --prompt` exit 0、stdout `recovered after retry`、stderr 两行 `[retry] attempt 1 of 5 in 1s (RATE_LIMIT)` / `attempt 2 …`；日志 14 事件、`seq` 0…13 连续、2×`llm/retry` + 2×`llm/retry-started`、`policyKey`/`delayMs`/`failure.code` 与上游一致
+- **真实 API（坏 key）**：exit 1、stderr 末尾 `[AUTH]`、`llm/retry` 计数 0、`turn/end{error,code:"AUTH"}`
+- **真实 API（`.env` 提供 key）**：清空进程环境变量、key 只放项目 `.env` → `chat --prompt` exit 0（真实模型回答）
+- **启动诊断端到端**：坏 `--config` → exit 1 + `Full diagnostics: …\startup-….log`，报告含警告/版本/平台/profile/config/错误
+- `.\scripts\build.ps1` → `bin\dsh.exe`（自报 commit `a155b8b`，即本批开始时的 HEAD）
 
 ## 最近验证（2026-11-16）
 

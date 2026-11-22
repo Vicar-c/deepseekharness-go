@@ -117,6 +117,7 @@
   |---|---|
   | CLI 命令/flag、工具清单、配置示例 | `README.md`（由 `cmd/dsh/docs_test.go` 强制） |
   | 包结构、对话时序、事件、HTTP 面、会话格式、并发语义 | `docs/ARCHITECTURE.md` |
+  | 错误码与失败分类、重试策略、`.env` 层序、日志与启动诊断格式 | `docs/ARCHITECTURE.md` §10 + `README.md` |
   | 上游映射、阶段范围、兼容性条目、验收达标情况 | `docs/MIGRATION_MAP.md` |
   | 待办的新增 / 完成 / 重排优先级 | `docs/BACKLOG.md`（唯一待办来源） |
   | 阶段、进行中、下一步、决策队列、最近验证 | `docs/STATUS.md` |

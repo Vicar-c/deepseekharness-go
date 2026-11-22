@@ -41,16 +41,16 @@ DeepSeek Harness（TS/Cordis）的能力，而不是一次性移植。
 
 | 包 | 职责 |
 |---|---|
-| `internal/kernel` | `Plugin` 生命周期（`Apply` → `Start` → `Stop` 逆序）、`Services` 类型化容器、`Events` 同步总线 |
+| `internal/kernel` | `Plugin` 生命周期（`Apply` → `Start` → `Stop` 逆序）、`Services` 类型化容器、`Events` 同步总线（`Emit` / `Bail` / `Serial` / `Parallel` / `Waterfall` 五种分发模式） |
 | `internal/profiles` | 启动组合：bundle → profile patch → home patch → `--patch` 层叠，`--dump-config` 输出每行/每设置的来源 |
-| `internal/llm` | `Client` 接口（可选 `StreamingClient`）、消息/工具调用模型、DeepSeek 兼容 HTTP + SSE 客户端 |
-| `internal/tool` | `Tool` 接口、`Registry`、`Pipeline`（guard/超时/panic/截断/事件）与批次调度（`ConcurrencySafe` + barrier + 模型序结果） |
+| `internal/llm` | `Client` 接口（可选 `StreamingClient`）、消息/工具调用模型、DeepSeek 兼容 HTTP + SSE 客户端、失败分类（`Failure`）与重试策略（`RetryPolicy`） |
+| `internal/tool` | `Tool` 接口、`Registry`、`Pipeline`（`tools/pre-execute` waterfall/超时/panic/截断/事件）与批次调度（`ConcurrencySafe` + barrier + 模型序结果） |
 | `internal/prompt` | 系统提示静态组装：`Section` 序列 + `Harness(Runtime)`（base 指令 + model/workspace/tools） |
 | `internal/builtin` | 内置插件：`read`、`write`、`list_dir`、`edit`、`glob`、`grep`、`read_image`、`bash`/`pwsh`、`now`、`todo_write`、`working_directory` |
-| `internal/agent` | 单会话 agent loop，负责模型调用、工具批次执行与结果按模型序回填 |
+| `internal/agent` | 单会话 agent loop，负责模型调用（含重试）、工具批次执行与结果按模型序回填 |
 | `internal/session` | 会话 v4 事件流（格式/投影/写入器/尾部修复）的内存模型与持久化 |
 | `internal/server` | 内嵌 Web UI + JSON/SSE API + 优雅退出 |
-| `internal/config` | JSON 配置 + 环境变量覆盖 + 设置来源追踪 |
+| `internal/config` | JSON 配置 + 两层 `.env` + 环境变量覆盖 + 设置来源追踪 |
 | `internal/version` | 构建期注入的版本信息 |
 
 ## 3. 插件内核
@@ -77,6 +77,20 @@ if !ok {
     return errors.New("builtin/fs: tool registry service is missing")
 }
 ```
+
+### 事件分发模式
+
+`kernel.Events` 提供与上游 Cordis 对齐的五种分发方式，订阅者与分发者显式选择模式：
+
+| 模式 | Go API | 语义 |
+|---|---|---|
+| emit | `On` + `Emit` | 顺序同步投递，忽略返回值，panic 被隔离 |
+| bail | `OnHook` + `Bail` | 顺序执行，遇到"bail 值"（非 nil 且非 `false`）立即停止并返回 |
+| serial | `OnHook` + `Serial` | 与 `bail` 相同：Go 里监听器都是普通函数调用，上游"同步/等待"的区分不存在 |
+| parallel | `OnHook` + `Parallel` | 并发执行全部监听器，`errors.Join` 汇总错误 |
+| waterfall | `OnWaterfall` + `Waterfall` | 洋葱模型：每个层收到 `next`，调用则继续、不调用即否决（含内置终点行为）；`next` 重复调用返回错误 |
+
+真实消费者：工具流水线的 `tools/pre-execute`（见 §5），后续的 `tools/execute`、`agent/turn-stopping` 与 `webserver/authorize` 也走同一套模式。监听器 panic 统一归一化为 `*kernel.PanicError`（`errors.As` 可判别），调用方不必解析字符串。
 
 启动流程（`cmd/dsh/main.go` 的 `bootstrap`）：
 
@@ -117,19 +131,23 @@ POST /api/chat {sessionId?, input}
 - **工具失败不终止循环**：`Pipeline.Execute` 永远返回 `Result`，失败以 `IsError` 结果回填给模型，让模型自行纠错（与上游一致）。
 - **系统提示词**：由 `internal/prompt` 组装（base 指令 + runtime 上下文），首个 turn 作为 `system/message` 落盘；`agent.Options.SystemPrompt` 可覆盖。
 - **请求信封**：`request/header` 自包含（provider/model + 工具 schema），信封不变就沿用上一条，所以一次回复的多个 step 只写一份；新进程续接写 `resume`。
+- **模型失败先分类再重试**：一次失败的模型调用先归一化成 `llm.Failure{code, message, status?, providerRetryAfterMs?, requestId?}`，再由 `RetryPolicy` 决定是否重试（见 §10）。可重试且尚未向用户输出任何分片时，按 `llm/retry` → 等待 → `llm/retry-started` 的顺序重试同一次请求；**已经流出内容分片的尝试不重试**，避免终端/UI 出现重复文本。
 - **消息顺序**：assistant(tool_calls) → 每个 tool 结果（带 `tool_call_id`）→ 下一次请求，符合 OpenAI/DeepSeek 协议。
+- **`turn/end` 记录结构化原因**：`completed`、`error`（带 `error:{message,code}`）、`aborted`（带 `reason:{kind:"user"}`）、`max-tokens`（模型输出被 token 上限截断）；崩溃补齐的轮次写 `interrupted`。
 
 ## 5. 工具执行流水线
 
 `Pipeline.Execute` 的固定顺序：
 
 1. `tool/started` 事件；
-2. 查找工具（未知工具 → 错误结果）；
-3. 依次执行 `Guard`（审批/沙箱/预算钩子，返回 error 即拒绝）；
+2. `tools/pre-execute` waterfall：每个层拿到 `tool.Call` 与 `next`，调用 `next` 继续、不调用则否决（返回的 `tool.Result` 即最终结果）；
+3. 查找工具（未知工具 → 错误结果）；
 4. 加超时（默认 `config.toolTimeoutSec`）；
 5. `recover` 工具 panic；
 6. 输出按 `config.maxToolOutputBytes` 截断（UTF-8 边界安全）；
 7. `tool/executed` 事件 + 结构化日志。
+
+`Pipeline.AddGuard(fn)` 是 waterfall 上的一个便捷层：`fn` 返回 error 即拒绝（`TOOL_BLOCKED`），返回 nil 则放行。审批、沙箱、预算都会挂成 `tools/pre-execute` 的层，而不是改流水线本身。
 
 新增工具：实现 `tool.Tool`（`Definition` + `Execute`），在某个 `kernel.Plugin.Apply` 里 `registry.Register` 即可。
 
@@ -151,10 +169,13 @@ POST /api/chat {sessionId?, input}
 | 事件 | 载荷 | 发布者 |
 |---|---|---|
 | `kernel/booted` | 插件数量 | kernel |
+| `tools/pre-execute` | `tool.Call`（waterfall；层返回 `tool.Result`） | tool.Pipeline |
 | `tool/started` | `tool.Call` | tool.Pipeline |
 | `tool/executed` | `tool.ExecutionEvent{Call, Result, Duration}` | tool.Pipeline |
 | `agent/started` | sessionId + input | agent.Loop |
 | `agent/step` | `agent.StepEvent{Iteration, ToolCalls}` | agent.Loop |
+| `agent/retry` | `agent.RetryEvent{Retry, MaxRetries, Mode, Code, Delay}` | agent.Loop |
+| `agent/stream` | `agent.StreamEvent`（瞬态，不落盘） | agent.Loop |
 | `agent/finished` | `agent.FinishedEvent` | agent.Loop |
 
 CLI 的 `[tool] write ok 0ms` 就是订阅 `tool/executed` 打印的。
@@ -214,7 +235,53 @@ CLI 的 `[tool] write ok 0ms` 就是订阅 `tool/executed` 打印的。
 
 迁移优先级与模块映射见 [MIGRATION_MAP.md](MIGRATION_MAP.md)。
 
-## 10. 后续演进建议
+## 10. 失败分类、重试、`.env` 与启动诊断
+
+### 模型失败分类
+
+`internal/llm/failure.go` 把任何模型调用失败归一化成 `*llm.Failure`：
+
+```go
+type Failure struct {
+    Message              string `json:"message"`
+    Code                 string `json:"code"`
+    Status               int    `json:"status,omitempty"`
+    ProviderRetryAfterMs int64  `json:"providerRetryAfterMs,omitempty"`
+    RequestID            string `json:"requestId,omitempty"`
+}
+```
+
+分类顺序（与上游 `transport.ts` 一致，先命中先返回）：`401/403` 或 `authentication_error` → `AUTH`；配额措辞或 `402` → `QUOTA`；`429` 或 `rate_limit_error` → `RATE_LIMIT`；上下文溢出的措辞规则 → `CONTEXT_WINDOW_EXCEEDED`；`400/413` 或 `invalid_request_error` → `INVALID_REQUEST`；`5xx` 或 `api_error`/`overloaded_error` → `SERVER`；其余 HTTP 状态 → `HTTP_<status>`。流内错误帧（无 HTTP 状态）落到 `SERVER`。上下文溢出与配额用正则识别**明确指向模型上下文**的措辞，所以"输出太长"不会被误判成上下文溢出。
+
+另外：`DEEPSEEK_API_KEY` 缺失 → `MISSING_CREDENTIAL`，取消 → `ABORTED`，超时 → `TIMEOUT`，其余网络错误 → `TRANSPORT`，正常结束但无内容无工具调用 → `EMPTY_RESPONSE`（可重试）。
+
+`Failure` 直接写进 `turn/end.error` 与 `llm/retry.failure`，字段名与上游 `LlmFailure` 相同，所以两种实现的日志可以互读。
+
+### 重试策略
+
+```go
+policy := llm.DefaultRetryPolicy() // normal, 5 次, 500ms 起, 10s 上限, ±10% 抖动
+policy.MaxRetries = cfg.MaxRetries
+```
+
+- **可重试码**：`EMPTY_RESPONSE`、`RATE_LIMIT`、`SERVER`、`TIMEOUT`、`TRANSPORT`；`AUTH`/`QUOTA`/`INVALID_REQUEST`/`CONTEXT_WINDOW_EXCEEDED` 一次都不重试——重复请求治不好它们。
+- **退避**：`min(initial × 2^(retry-1), max)`，再乘 `[1-j, 1+j]` 的对称抖动；provider 给出 `Retry-After`（秒数或 HTTP date）时按它等待，超过上限则 normal 策略放弃重试。
+- **持久化顺序**：`llm/retry`（含 `retryId`、`policyKey`、`delayMs`、`failure`）先落盘，再等待，再写 `llm/retry-started`。等待可被 ctx 取消，取消后本轮记 `aborted`。
+- **不重试已输出分片的尝试**：流式响应一旦向用户输出过内容，失败就直接结束本轮，避免重复文本。
+
+### `.env` 两层加载
+
+`internal/config/env.go` 在读取配置**之前**套用两层 `.env`：项目层（当前工作目录）与数据层（配置目录），优先级 `已导出环境变量 > 项目层 > 数据层`。两个文件都先解析、校验，再统一应用，所以被拒绝时环境完全不变。**引导变量**（`PATH`、`DSH_*`、`XDG_*`、`DYLD_*`、代理/TLS 信任锚、解释器与 VCS 钩子）只允许由启动环境设置；数据层额外允许代理名与精确拼写的 `DEEPSEEK_BASE_URL`（仓库自带的项目层不行）。
+
+上游没有 `DSH_PERMISSION_MODE` 这个环境变量：权限模式在上游是 provider/headless 的 `permissionMode` 配置，真正生效要靠 `permission-presets` 与沙箱服务，属于 P2。本实现因此**不发明**该环境变量，权限模式随沙箱/审批一起做（见 [D-0009](decisions/D-0009-operability-batch.md)）。
+
+### 日志与启动诊断
+
+- 结构化日志（`log/slog`）同时写 stderr 与 `config.logFile`（默认 `<数据目录>/logs/dsh.log`，`off` 关闭）。日志文件打不开只告警、不阻断启动。
+- 启动失败（`--config` 解析、profile 解析、`boot`）时：stderr 打印原因，并把报告写到 `<数据目录>/logs/startup-<时间戳>-<随机>.log`（权限 0600，目录 0700），末行打印 `Full diagnostics: <path>`。报告含时间、版本、Go 版本、平台、profile、home、config 路径与完整错误，并带"可能含敏感值，分享前先检查"的警告；写不出去时改为把报告正文打到 stderr。
+- `dsh config` 额外打印实际套用的 `.env` 路径。
+
+## 11. 后续演进建议
 
 1. **P1 收尾**：resume 的 `interruptedTurnClosers`、`request/header` 可重建、`-race` 下并发会话压测。
 2. **P2**：引入 `ctx.fs`、`ctx.shell`、`ctx.sandbox` 等服务 seam，为沙箱策略（guard 链）与审批事件做铺垫；工具输出 spill。
@@ -222,14 +289,14 @@ CLI 的 `[tool] write ok 0ms` 就是订阅 `tool/executed` 打印的。
 4. **P4**：Web RPC/事件流兼容层、多会话前端、Desktop 壳与插件市场。
 5. **持续**：对齐上游 session JSONL / 工具 schema，保证跨实现可复现与可迁移。
 
-## 11. 安全边界（当前阶段）
+## 12. 安全边界（当前阶段）
 
 | 能力 | 限制 | 备注 |
 |---|---|---|
 | `read`/`write`/`list_dir` | 工作区路径白名单（拒绝 `..` 与绝对路径逃逸） | 已实现 |
 | `pwsh`/`bash` | 无沙箱，继承宿主用户权限 | 等价上游 `danger-full-access`；P2 引入 read-only/workspace-write 策略 |
 | 网络 | LLM 客户端仅访问配置的 `baseUrl` | 工具命令可发起任意网络请求（同 shell 限制） |
-| 凭据 | API key 只从环境变量读取，不写入会话/仓库 | 会话 JSONL 只含模型消息与工具结果 |
-| 审批 | `tool.Pipeline.AddGuard` 提供否决钩子 | 默认无 guard；P2 接入审批/策略链 |
+| 凭据 | API key 只从环境变量或 `.env` 读取，不写入会话/仓库 | 会话 JSONL 只含模型消息与工具结果；`.env` 拒绝引导变量 |
+| 审批 | `tool.Pipeline.AddGuard` 提供否决钩子，`tools/pre-execute` waterfall 接受任意策略层 | 默认无 guard；P2 接入审批/策略链 |
 
 > 设计取舍：P0/P1 优先跑通闭环，沙箱与审批按迁移计划 P2 再做；在此之前请把 harness 视为与用户同等权限的本地进程。

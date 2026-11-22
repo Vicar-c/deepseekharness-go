@@ -25,3 +25,4 @@ Agent 的自主实现决策不在此登记，写入对应任务记录的「自�
 | [D-0006](D-0006-user-study-comments.md) | 用户的学习注释不进提交，Agent 只提交显式路径 | 生效 | 2026-11-21 | —（规则类决策） |
 | [D-0007](D-0007-test-backfill-authorization.md) | 补测试默认授权，不再逐次询问；改实现仍需决策 | 生效 | 2026-11-21 | [T-0007](../tasks/T-0007-batch0-1-tools.md) |
 | [D-0008](D-0008-docs-in-sync.md) | 文档必须随实现并行更新；README 的 CLI/工具/配置由测试钉死 | 生效 | 2026-11-21 | [T-0016](../tasks/T-0016-gap-audit.md) |
+| [D-0009](D-0009-operability-batch.md) | 批次 8 范围修正：无 `DSH_PERMISSION_MODE`、`turn/end` 对齐上游、已输出分片不重试、失败码只做可达子集 | 生效 | 2026-11-22 | [T-0021](../tasks/T-0021-operability-batch.md) |

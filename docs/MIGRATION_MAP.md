@@ -512,6 +512,8 @@ Go 侧关键不变量（迁移验收点）：**模型可见即已记录**；取�
 | 18 | CLI 行为面 | **C** | 退出码：one-shot `completed`=0/其他=1、用法错误非零、`SIGINT`=130、`SIGTERM`=0；首次信号 5 秒优雅退出；`--version`/`-V`；启动失败打印 `Full diagnostics:` 与日志路径 | `apps/cli/reference/README.md`、`apps/cli/README.md` |
 | 19 | 快照/回归基线 | **B** | 以 `snapshots/` 与 `apps/cli/tests/` 的录制会话为对照；`test:snapshot` 无密钥可跑 | `AGENTS.md`（Commands）、`docs/testing.zh.md` |
 
+**与 Go 实现的对照（2026-11-22）**：第 9 行的 LLM 失败码已按**可达子集**落地（`AUTH`/`RATE_LIMIT`/`QUOTA`/`CONTEXT_WINDOW_EXCEEDED`/`INVALID_REQUEST`/`SERVER`/`TIMEOUT`/`TRANSPORT`/`ABORTED`/`EMPTY_RESPONSE`/`MISSING_CREDENTIAL`/`HTTP_<n>`，见 [D-0009](decisions/D-0009-operability-batch.md)）；第 12 行的 `.env` 两层已落地，但 `DSH_PERMISSION_MODE` **经核对不属于本机安装版（0.2.2）的读取面**——它只出现在升级指引的用户 patch 示例里，真正的权限模式是 provider/headless 的 `permissionMode` + `permission-presets` + 沙箱服务（P2），因此本仓库不实现该环境变量；第 18 行的 `Full diagnostics:` 与退出码语义已落地（[T-0021](tasks/T-0021-operability-batch.md)）。
+
 **兼容性落地建议**：在 `internal/session` 与 `internal/tool` 各建一个 `testdata/compat/` 目录，放入上游导出的小样本（1 条会话、1 份工具 catalog、1 个请求头快照），用 golden test 双向校验：Go 读取上游样本（必须成功）、Go 写出的样本能被上游读取器解析（人工一次性验证）。
 
 ---

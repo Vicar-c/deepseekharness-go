@@ -4,7 +4,7 @@ DeepSeek Harness（DSH）的 **Go 重写实现**：保留上游的产品语义�
 
 - 上游项目（TypeScript + Cordis）：<https://github.com/deepseek-ai/deepseek-harness>（MIT）
 - 目标：一个可运行、可扩展、跨平台的 DSH 实现，**零第三方 Go 依赖**
-- 当前状态：P1 主体完成（批次 0–4）。真实 DeepSeek API、真实 `dsh web` 进程、真实 headless Chrome 均已验证；P1 剩余缺口见 [T-0016 差距审计](docs/tasks/T-0016-gap-audit.md)
+- 当前状态：**P1 已收口（批次 0–8）**。真实 DeepSeek API、真实 `dsh web` 进程、真实 headless Chrome 均已验证；P1 缺口逐条关闭情况见 [T-0016 差距审计](docs/tasks/T-0016-gap-audit.md) 与 [docs/BACKLOG.md](docs/BACKLOG.md)
 
 > 仓库名、Go 模块路径与运行时数据目录统一为 `deepseekharness-go`；旧目录 `~/.deekseekharness-go/` 会在首次启动时自动迁移一次（见 [D-0005](docs/decisions/D-0005-data-directory-rename.md)）。
 
@@ -13,13 +13,14 @@ DeepSeek Harness（DSH）的 **Go 重写实现**：保留上游的产品语义�
 | 能力 | 说明 |
 |---|---|
 | 会话 | DSH **v4 事件流**（header + 事件、`seq` 连续、`surfaceOp` 投影、崩溃尾部修复）；**跨进程单写者锁**（POSIX `flock` / Windows `LockFileEx`，崩溃自动释放）与**每个 step 落盘**；系统提示与请求信封（含工具 schema）都落盘；被杀进程留下的未闭合轮次会在续接时自动补齐；能读上游真实会话样本 |
-| 模型 | OpenAI 兼容的 DeepSeek 客户端，非流式 + **SSE 流式**，工具调用分片组装 |
-| 工具 | 11 个内置工具；执行流水线（guard、超时、panic 恢复、输出截断、事件） |
+| 模型 | OpenAI 兼容的 DeepSeek 客户端，非流式 + **SSE 流式**，工具调用分片组装；失败按 provider 无关码分类（`AUTH`／`RATE_LIMIT`／`CONTEXT_WINDOW_EXCEEDED`／`QUOTA`／`TIMEOUT`／`TRANSPORT` 等）并按策略退避重试，每次重试先落盘 |
+| 工具 | 11 个内置工具；执行流水线（`tools/pre-execute` waterfall → 超时 → panic 恢复 → 输出截断 → 事件） |
 | 工具批次 | 并发安全的调用可重叠（默认上限 10），独占调用形成 barrier，结果始终按模型序回填 |
-| 组合 | **profiles**：`bundle → profile patch → home patch → --patch` 层叠，`--dump-config` 打印每行与每个设置的来源 |
+| 组合 | **profiles**：`bundle → profile patch → home patch → --patch` 层叠，`--dump-config` 打印每行与每个设置的来源；两层 `.env`（项目目录 + 数据目录）在配置之前套用 |
+| 运维 | 结构化日志同时写 stderr 与 `~/.deepseekharness-go/logs/dsh.log`；启动失败保存 `Full diagnostics:` 报告并打印路径 |
 | CLI | `version` / `web` / `chat` / `tools` / `config`；`--prompt` 单轮、`--session` 续接 |
 | Web | 内嵌 UI（`fetch` + `ReadableStream` 逐字渲染）、`/api/chat` 支持 JSON 与 SSE（Accept 协商） |
-| 测试 | 159 个 Go 用例（`internal/*` 覆盖率 65%–84%，含 100 并发会话压测与跨进程锁用例）+ 真实浏览器 E2E（CDP 驱动 Chrome） |
+| 测试 | 249 个 Go 用例（含 100 并发会话压测、跨进程锁、失败分类与重试时序）+ 真实浏览器 E2E（CDP 驱动 Chrome） |
 
 ## 快速开始
 
@@ -67,6 +68,8 @@ go run ./cmd/dsh web
 
 退出码：成功 `0`、用法错误 `2`、运行时失败 `1`、`Ctrl+C`（SIGINT）`130`、SIGTERM `0`。收到终止信号后会先取消当前轮次，给进程 5 秒收尾，第二次信号立即退出。
 
+启动失败（配置解析、profile 解析、boot 失败）会打印原因，并把完整报告写入 `~/.deepseekharness-go/logs/startup-*.log`，末行给出 `Full diagnostics: <path>`；报告写不出去时改为把报告正文打到 stderr。
+
 ## 内置工具
 
 <!-- tools:start -->
@@ -105,15 +108,28 @@ go run ./cmd/dsh web
   "toolTimeoutSec": 60,
   "maxToolOutputBytes": 131072,
   "maxParallelToolCalls": 10,
-  "logLevel": "info"
+  "logLevel": "info",
+  "logFile": "C:\\Users\\<you>\\.deepseekharness-go\\logs\\dsh.log",
+  "maxRetries": 5
 }
 ```
 
 层级（低 → 高）：内置默认 → 配置文件 → 环境变量 → profile 层（bundle / profile patch / home patch / `--patch`）→ 命令行 flag。
 `--dump-config` 会为每个设置打印来源，例如 `"model": "patch:C:\\tmp\\x.json"`。
 
-常用环境变量：`DEEPSEEK_API_KEY`、`DSH_MODEL`、`DSH_BASE_URL`、`DSH_WORKSPACE`、`DSH_SESSION_DIR`、`DSH_LOG_LEVEL`、`DSH_MAX_ITERATIONS`、`DSH_MAX_PARALLEL_TOOL_CALLS`。
+`maxRetries` 是一次失败模型调用的重试预算（默认 5；`0` 表示不重试）。只有可重试的错误码才会重试（默认 `EMPTY_RESPONSE`、`RATE_LIMIT`、`SERVER`、`TIMEOUT`、`TRANSPORT`）；退避为 500ms 起、上限 10s、±10% 抖动，provider 给出 `Retry-After` 时按它等待。
+`logFile` 为 `off` 时只写 stderr。
+
+常用环境变量：`DEEPSEEK_API_KEY`、`DSH_MODEL`、`DSH_BASE_URL`、`DSH_WORKSPACE`、`DSH_SESSION_DIR`、`DSH_LOG_LEVEL`、`DSH_LOG_FILE`、`DSH_MAX_ITERATIONS`、`DSH_MAX_PARALLEL_TOOL_CALLS`、`DSH_MAX_RETRIES`。
 `DEEPSEEK_API_KEY` 未设置时 harness 仍可启动，但 `/api/chat` 与 `chat` 会返回明确错误。
+
+### `.env`（两层）
+
+配置读取之前会套用两个 `.env` 文件，优先级为：**已导出的环境变量 > 项目层（当前目录 `.env`）> 数据层（数据目录 `.env`）**。两个文件都会先解析校验、再统一应用，所以任一层被拒绝时环境变量完全不变。
+
+被拒绝的是**引导变量**：`PATH`、`SHELL`、`DSH_*`、`XDG_*`、`DYLD_*`、代理与 TLS 信任锚（`SSL_CERT_FILE` 等）、解释器与 VCS 钩子（`PYTHONPATH`、`GIT_SSH`…）。它们决定进程如何启动、代码与指令从哪里加载、流量发往哪里，只允许由启动环境设置。唯一例外：数据层可以设置 `HTTP_PROXY`／`HTTPS_PROXY`／`ALL_PROXY`／`NO_PROXY` 与精确拼写的 `DEEPSEEK_BASE_URL`（项目层随仓库传播，因此不行）。
+
+`dsh config` 会打印实际套用的 `.env` 路径（`env files:` 一行）。
 
 ## Profiles
 
@@ -148,7 +164,7 @@ bundle patches → profile patch → home patch(cordis.patch.json) → --patch
 gofmt -l .                                  # 必须无输出
 go vet ./...
 & "$env:USERPROFILE\go\bin\staticcheck.exe" ./...
-go test ./... -count=1                      # 159 个用例（含 README 契约测试、并发压测、跨进程锁）
+go test ./... -count=1                      # 249 个用例（含 README 契约测试、并发压测、跨进程锁、重试时序）
 .\scripts\build.ps1                         # bin\dsh.exe（注入版本与 commit）
 
 # 浏览器端 E2E（真实 Chrome，CDP，零 npm 依赖）
@@ -162,7 +178,8 @@ CI（GitHub Actions）在 ubuntu 与 windows 上跑 gofmt / vet / test / `test -
 - `read` / `write` / `list_dir` / `edit` / `glob` / `grep` / `read_image` / `working_directory`：路径解析限制在 `--workspace` 内，拒绝逃逸出工作区。
 - `pwsh` / `bash`：**目前没有沙箱**，命令以当前用户权限访问宿主文件系统（等价上游 `danger-full-access`）。上游的 `read-only` / `workspace-write` 三模式策略属 P2 里程碑。
 - Web 服务默认只监听 `127.0.0.1`，且**目前没有 token 鉴权**：本机其它进程可以直接驱动 harness。
-- 会话与配置不写入 Git；API key 只通过环境变量提供。
+- 会话与配置不写入 Git；API key 只通过环境变量（或 `.env`）提供，不进配置文件。
+- `.env` 只允许设置普通变量：`PATH`、`DSH_*`、代理与 TLS 信任锚等**引导变量**在任何层都会被拒绝（数据目录层的代理与 `DEEPSEEK_BASE_URL` 除外），防止仓库自带的 `.env` 改变进程如何启动、代码从哪里加载、流量发往哪里。
 - 不建议在持有生产凭据的机器上让模型执行不可信提示词；最小权限可给 `tool.Pipeline` 加 guard（`AddGuard`）。
 
 ## 目录结构
@@ -211,8 +228,8 @@ scripts/check_md_links.py Markdown 相对链接校验
 
 ## 与上游的差距（路线图摘要）
 
-已完成：P0 骨架 + P1 单 agent 闭环（v4 会话、流式、工具批次、profiles、CLI、最小 Web、浏览器 E2E）。
-**P1 剩余**：LLM 失败分类与重试、`.env`/`DSH_PERMISSION_MODE`、日志文件与启动诊断、内核四种事件分发模式（详见 [docs/BACKLOG.md](docs/BACKLOG.md) 的 B-27…B-30）。
+已完成：P0 骨架 + **P1 单 agent 闭环全部收口**（v4 会话、流式、工具批次、profiles、CLI、最小 Web、浏览器 E2E、崩溃恢复、请求信封、持久化锁、失败分类与重试、`.env`、日志与启动诊断、四种事件分发模式）。
+**下一阶段（P2）**：沙箱三模式与 `fs`/`shell` seam、工具输出 spill、审批 waterfall、压缩、`dsh sessions`、Web 会话列表（详见 [docs/BACKLOG.md](docs/BACKLOG.md)）。
 未迁移：沙箱三模式与 `fs`/`shell` seam（P2）、MCP/LSP/Skill/Subagent/Team（P3）、SDK/ACP/Workflow/Office/Desktop 与上游前端托管（P4）。排期与验收要点见 [docs/BACKLOG.md](docs/BACKLOG.md)。
 
 ## 许可证

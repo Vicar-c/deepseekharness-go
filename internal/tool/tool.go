@@ -30,7 +30,31 @@ type Call struct {
 type Result struct {
 	Content string
 	IsError bool
+	// Code is a stable machine-readable error code, set only when IsError. The
+	// session log and the UI need to tell a timeout from a policy rejection
+	// without parsing prose (MIGRATION_MAP §6-8).
+	Code string
 }
+
+// Structured error codes carried by tool results and by recovered sessions.
+const (
+	// CodeTimeout marks a call the pipeline deadline stopped.
+	CodeTimeout = "TOOL_TIMEOUT"
+	// CodeNotFound marks a call naming a tool that is not registered.
+	CodeNotFound = "TOOL_NOT_FOUND"
+	// CodeBlocked marks a call a guard vetoed before execution.
+	CodeBlocked = "TOOL_BLOCKED"
+	// CodePanicked marks a tool body that panicked; the loop keeps running.
+	CodePanicked = "TOOL_PANICKED"
+	// CodeAborted marks a call that never started because the batch was cancelled.
+	CodeAborted = "ABORTED_BEFORE_DISPATCH"
+	// CodeNotStarted marks a call the model asked for but the loop never
+	// dispatched before it crashed.
+	CodeNotStarted = "TOOL_NOT_STARTED"
+	// CodeOutcomeUnknown marks a call that was recorded but whose result never
+	// reached the log; recovery cannot know whether it ran.
+	CodeOutcomeUnknown = "TOOL_OUTCOME_UNKNOWN"
+)
 
 // Tool is one executable capability. All fields are safe for concurrent use.
 type Tool interface {

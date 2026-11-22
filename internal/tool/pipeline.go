@@ -119,17 +119,21 @@ func (p *Pipeline) Execute(ctx context.Context, call Call) Result {
 func (p *Pipeline) execute(ctx context.Context, call Call) (result Result) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			result = Result{IsError: true, Content: fmt.Sprintf("tool %q panicked: %v", call.Name, recovered)}
+			result = Result{
+				IsError: true,
+				Code:    CodePanicked,
+				Content: fmt.Sprintf("tool %q panicked: %v", call.Name, recovered),
+			}
 		}
 	}()
 
 	tool, ok := p.registry.Get(call.Name)
 	if !ok {
-		return Result{IsError: true, Content: fmt.Sprintf("tool %q is not registered", call.Name)}
+		return Result{IsError: true, Code: CodeNotFound, Content: fmt.Sprintf("tool %q is not registered", call.Name)}
 	}
 	for _, guard := range p.snapshotGuards() {
 		if err := guard(ctx, call); err != nil {
-			return Result{IsError: true, Content: fmt.Sprintf("tool %q blocked: %v", call.Name, err)}
+			return Result{IsError: true, Code: CodeBlocked, Content: fmt.Sprintf("tool %q blocked: %v", call.Name, err)}
 		}
 	}
 
@@ -140,7 +144,11 @@ func (p *Pipeline) execute(ctx context.Context, call Call) (result Result) {
 	if err != nil {
 		message := err.Error()
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(callCtx.Err(), context.DeadlineExceeded) {
-			message = fmt.Sprintf("timed out after %s", p.timeout)
+			return Result{
+				IsError: true,
+				Code:    CodeTimeout,
+				Content: fmt.Sprintf("tool %q timed out after %s", call.Name, p.timeout),
+			}
 		}
 		return Result{IsError: true, Content: fmt.Sprintf("tool %q failed: %s", call.Name, message)}
 	}

@@ -100,6 +100,7 @@ func (p *Pipeline) ExecuteBatch(ctx context.Context, calls []Call, maxParallel i
 func skippedResult(call Call, err error) Result {
 	return Result{
 		IsError: true,
+		Code:    CodeAborted,
 		Content: fmt.Sprintf("tool %q was not started: %v", call.Name, err),
 	}
 }

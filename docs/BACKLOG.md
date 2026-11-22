@@ -20,16 +20,16 @@
 
 | ID | 事项 | 规模 | 依赖 | 验收要点 | 状态 |
 |---|---|---|---|---|---|
-| B-01 | 崩溃恢复补齐 `interruptedTurnClosers`：未应答的 `tool/call` 补 `TOOL_OUTCOME_UNKNOWN`、未发起的补 `TOOL_NOT_STARTED`、补 `step/end`、补合成的 `turn/end{interrupted}` | M | — | 三种截断位置（`tool/call` 后 / `tool/result` 后 / assistant 后）各 resume 一次：事件序列完整，**真实 DeepSeek API 接受历史**（复现脚本见 T-0016 §2②） | todo |
-| B-02 | 同会话 turn 互斥 + `Store.Load` 校验 header id 与文件名一致 | S | — | 两个 loop 并发写同一 session：第二个被拒（或串行化）；文件改名后 `--session` 报"id 不匹配"而不是指向旧文件名 | todo |
-| B-03 | 会话日志容忍 UTF-8 BOM | XS | — | 带 BOM 的 `.jsonl` 可读；补用例 | todo |
+| B-01 | 崩溃恢复补齐 `interruptedTurnClosers`：未应答的 `tool/call` 补 `TOOL_OUTCOME_UNKNOWN`、未发起的补 `TOOL_NOT_STARTED`、补 `step/end`、补合成的 `turn/end{interrupted}` | M | — | 三种截断位置（`tool/call` 后 / `tool/result` 后 / assistant 后）各 resume 一次：事件序列完整，**真实 DeepSeek API 接受历史**（复现脚本见 T-0016 §2②） | done（[T-0018](tasks/T-0018-crash-recovery.md)） |
+| B-02 | 同会话 turn 互斥 + `Store.Load` 校验 header id 与文件名一致 | S | — | 两个 loop 并发写同一 session：第二个被拒（或串行化）；文件改名后 `--session` 报"id 不匹配"而不是指向旧文件名 | done（[T-0018](tasks/T-0018-crash-recovery.md)） |
+| B-03 | 会话日志容忍 UTF-8 BOM | XS | — | 带 BOM 的 `.jsonl` 可读；补用例 | done（[T-0018](tasks/T-0018-crash-recovery.md)） |
 
 ## P1 · P1 收口（按此顺序）
 
 | ID | 事项 | 规模 | 依赖 | 验收要点 | 状态 |
 |---|---|---|---|---|---|
-| B-04 | 工具结果结构化错误码（`TOOL_TIMEOUT` / `TOOL_NOT_STARTED` / `TOOL_OUTCOME_UNKNOWN` / `ABORTED_BEFORE_DISPATCH`） | S | 与 B-01 同批 | `tool/result` 载荷带 code；超时/取消/未知三条用例 | todo |
-| B-05 | `turn/end` 增加 `cancelled` / `interrupted`；CLI 信号语义（SIGINT=130、SIGTERM=0、5 秒优雅退出） | S | B-01 | Ctrl+C → 130 且日志 `turn/end{cancelled}`；SIGTERM → 0 | todo |
+| B-04 | 工具结果结构化错误码（`TOOL_TIMEOUT` / `TOOL_NOT_STARTED` / `TOOL_OUTCOME_UNKNOWN` / `ABORTED_BEFORE_DISPATCH`） | S | 与 B-01 同批 | `tool/result` 载荷带 code；超时/取消/未知三条用例 | done（[T-0018](tasks/T-0018-crash-recovery.md)） |
+| B-05 | `turn/end` 增加 `cancelled` / `interrupted`；CLI 信号语义（SIGINT=130、SIGTERM=0、5 秒优雅退出） | S | B-01 | Ctrl+C → 130 且日志 `turn/end{cancelled}`；SIGTERM → 0 | done（[T-0018](tasks/T-0018-crash-recovery.md)） |
 | B-06 | 并发会话压力用例：`-race` 下 100 会话读写 | S | B-02 | CI Linux 通过；无数据竞争 | todo |
 | B-07 | `request/header` + `request/context` 落盘（首轮/信封变化/替换后/恢复时写；未变步骤继承） | M | — | 同会话第二次请求不重复 header；改工具或模型则写新 header；golden 测试 | todo |
 | B-08 | `system/message` 落盘 + `internal/prompt` 静态组装（片段 + 工具 schema） | M | B-07 | 日志含 system/message；resume 后请求与首轮逐字段一致 | todo |
@@ -79,10 +79,10 @@ MCP / LSP / Skill / Subagent / Team / Jobs / Goal / Preset+Scope / Storage / Set
 
 | 批次 | 内容 | 预估 | 为什么这个顺序 |
 |---|---|---|---|
-| **5** | P0：B-01 + B-02 + B-03，同批带上 B-04/B-05 | 0.5–1 天 | 唯一"实测已坏"的一组；崩溃恢复、互斥、错误码、取消语义互相咬合，一起做省一次回归 |
+| **5** | P0：B-01 + B-02 + B-03，同批带上 B-04/B-05 | ✅ 已完成 2026-11-22（[T-0018](tasks/T-0018-crash-recovery.md)） | 唯一"实测已坏"的一组；崩溃恢复、互斥、错误码、取消语义互相咬合，一起做省一次回归 |
 | **6** | B-06（并发压测）+ B-07 + B-08 | 1 天 | 数据完整性：请求信封与系统提示越晚补，历史日志缺得越多；压测先把 B-02 的并发假设钉住 |
 | **7** | B-09 + B-10 | 1 天 | 持久化硬化，风险最高（跨平台锁），单独一批便于回滚 |
 | **8** | B-27 + B-28 + B-29 + B-30 | 1 天 | 错误分类与 CLI/内核的"可运维性"，做完 P1 就真的收口 |
 | **9** | 按 B-13 的决策进入 P2 | — | P2 的第一块取决于你要安全（沙箱）还是架构（seam）先走 |
 
-**当前建议**：先做**批次 5**（B-01 是硬伤，其余三项顺手）——这也是 Q-0011 的 A 选项。
+**当前建议**：批次 5 已完成；下一批是**批次 6**（B-06 并发压测 + B-07 请求信封 + B-08 系统提示），对应 Q-0011 的 B 选项或重新确认。

@@ -50,7 +50,7 @@
 - profiles 层叠（批次 4）：`internal/profiles` 实现 `bundle → profile patch → home patch → --patch`，`--profile` / `--patch` / `--dump-config` 上线；bundle 为 `base` / `web-app` / `headless`，profile 由内建名或 `<config dir>/profiles/<name>/package.json` 定义；传输门禁让 `dsh web --profile headless` 这类错误组合快速失败。记录见 [T-0014](tasks/T-0014-profiles-and-dump-config.md)。
 - 工具批次（批次 4）：`tool.ConcurrencySafe` 可选接口 + `Pipeline.ExecuteBatch`（并发上限、独占 barrier、模型序结果槽、取消语义），内置工具中仅只读的 6 个 opt-in；`agent.Loop` 先落全部 `tool/call` 再按模型序落 `tool/result`。记录见 [T-0015](tasks/T-0015-tool-batch.md)。
 - 差距审计（2026-11-21）：重读全部代码与文档，对照 P1 范围/验收与 §6 兼容性条目，实跑 CLI 与真实 API 复现崩溃恢复；**P1 验收 ②（resume 补齐）与 ③（并发会话压测）实测未达标**，另有请求信封、系统提示落盘、fsync 屏障、跨进程锁、LLM 错误分类等缺口。记录见 [T-0016](tasks/T-0016-gap-audit.md)。
-- 文档同步机制（2026-11-21）：用户要求"文档随实现并行更新"→ [D-0008](decisions/D-0008-docs-in-sync.md)；重写 README（11 工具 / v4 / 流式 / profiles / 批次并发），新增 `cmd/dsh/docs_test.go` 把 **命令清单、工具表、配置示例** 钉成测试（负向验证过），AGENTS.md §1.14 规定改动↔文档对照表，CI 增加 Markdown 链接校验。记录见 [T-0017](tasks/T-0017-docs-in-sync.md)。
+- 崩溃恢复与取消语义（批次 5，2026-11-22）：`Store.Resume` 在续接前补齐 `interruptedTurnClosers`（未应答 `tool/call` → `TOOL_OUTCOME_UNKNOWN`、未发起 → `TOOL_NOT_STARTED`、补 `step/end`、补 `turn/end{interrupted}`）；同会话 turn 租约、`Load` 校验 header id、会话日志 BOM 容忍（含 `RepairTail` 不误截断）；`tool.Result.Code` 五个错误码；`turn/end{cancelled}` 与 SIGINT=130 / SIGTERM=0。记录见 [T-0018](tasks/T-0018-crash-recovery.md)。`n- 文档同步机制（2026-11-21）：用户要求"文档随实现并行更新"→ [D-0008](decisions/D-0008-docs-in-sync.md)；重写 README（11 工具 / v4 / 流式 / profiles / 批次并发），新增 `cmd/dsh/docs_test.go` 把 **命令清单、工具表、配置示例** 钉成测试（负向验证过），AGENTS.md §1.14 规定改动↔文档对照表，CI 增加 Markdown 链接校验。记录见 [T-0017](tasks/T-0017-docs-in-sync.md)。
 
 ## 进行中
 
@@ -59,13 +59,10 @@
 - **批次 2 已完成**（[T-0008](tasks/T-0008-session-v4-format-layer.md)、[T-0009](tasks/T-0009-session-v4-projection-and-writer.md)、[T-0010](tasks/T-0010-session-v4-wiring.md)）：会话以 v4 事件流落盘，CLI / Web / agent 全链路接通；真实 DeepSeek API 已验证（13 行日志，含 `tool/call` + `tool/result`）。
 - **批次 3 已完成**（[T-0011](tasks/T-0011-streaming-llm-agent-cli.md)、[T-0012](tasks/T-0012-web-sse.md)）：流式全链路 `llm.StreamingClient → agent/stream → CLI / Web SSE`，真实 API 与真实 `dsh web` 进程均已验证；[T-0013](tasks/T-0013-browser-e2e.md) 补上真实浏览器渲染断言。
 - **批次 4 已完成**（[T-0014](tasks/T-0014-profiles-and-dump-config.md)、[T-0015](tasks/T-0015-tool-batch.md)）：profiles 层叠 + `--dump-config` + `--patch`，以及工具批次并发 / barrier / 模型序。
-- 待办与优先级：**唯一来源是 [docs/BACKLOG.md](BACKLOG.md)**（P0/P1/P2/P3 + 规模 + 依赖 + 验收要点 + 批次拆分）。下表只是摘要：
-  1. **P0**：B-01 崩溃恢复补齐（实测 400）、B-02 同会话互斥与 `Load` id 校验、B-03 BOM 容忍；
-  2. **P1 收口**：B-04 错误码、B-05 取消语义/信号、B-06 并发压测、B-07 请求信封、B-08 系统提示落盘、B-09 fsync/flush、B-10 跨进程锁；
-  3. **决策项**：B-11 zstd 读取（依赖）、B-12 Web 鉴权、B-13 P2 起点（沙箱 vs seam）；
-  4. **P2**：seam / 沙箱 / spill / 审批 / compaction / web 工具 / 错误分类 / `.env` 等。
-
-> 排序依据见 [T-0016 差距审计](tasks/T-0016-gap-audit.md)：**P1 验收 ②③ 实测未达标**。下一批建议 **批次 5（B-01 + B-02 + B-03，带 B-04/B-05）**，对应决策 **Q-0011**。
+- 待办与优先级：**唯一来源是 [docs/BACKLOG.md](BACKLOG.md)**（P0/P1/P2/P3 + 规模 + 依赖 + 验收要点 + 批次拆分）。
+  - **批次 5 已完成**（[T-0018](tasks/T-0018-crash-recovery.md)）：B-01 崩溃恢复、B-02 互斥/id 校验、B-03 BOM、B-04 错误码、B-05 取消语义与信号。
+  - **下一批（批次 6）**：B-06 并发压测、B-07 `request/header`、B-08 系统提示落盘 —— 见决策 **Q-0011**。
+  - 决策项：B-11 zstd 读取（依赖）、B-12 Web 鉴权、B-13 P2 起点（沙箱 vs seam）。
 
 ## 决策队列（与会话内表格同源）
 
@@ -84,7 +81,8 @@
 | Q-0008 | 是否补最小 CI（`.github/workflows/ci.yml`）？ | A. 补 / B. 暂不补 | A | **resolved**：已按 A 处理（[T-0005](tasks/T-0005-rename-and-hardening.md)） |
 | Q-0009 | 运行时数据目录是否从 `~/.deekseekharness-go/` 改名为 `~/.deepseekharness-go/`？ | A. 改名 + 一次性迁移 / B. 保持旧名 | A | **resolved**：已按 A 处理（[D-0005](decisions/D-0005-data-directory-rename.md)、[T-0006](tasks/T-0006-data-directory-rename.md)） |
 | Q-0010 | 批次 4 之后下一批做什么？ | A. P1 收尾 / B. 直接进 P2 / C. 其他 | A | **已被 Q-0011 取代**：用户要求先做完整差距审计 |
-| Q-0011 | 差距审计后先做哪一项？ | A. [BACKLOG](BACKLOG.md) 批次 5（P0：B-01 崩溃恢复 + B-02 互斥/id 校验 + B-03 BOM，带 B-04/B-05）/ B. 批次 5–8 一次授权全部 P1 收口 / C. 只做 B-01 / D. 直接进 P2 | A | 待决策 |
+| Q-0011 | 差距审计后先做哪一项？ | A. [BACKLOG](BACKLOG.md) 批次 5（P0：B-01 崩溃恢复 + B-02 互斥/id 校验 + B-03 BOM，带 B-04/B-05）/ B. 批次 5–8 一次授权全部 P1 收口 / C. 只做 B-01 / D. 直接进 P2 | A | **已按 A 完成批次 5**（[T-0018](tasks/T-0018-crash-recovery.md)）；下一批见 Q-0012 |
+| Q-0012 | 批次 5 之后做什么？ | A. 批次 6（B-06 并发压测 + B-07 请求信封 + B-08 系统提示）/ B. 批次 6–8 一次授权做完 P1 收口 / C. 只做 B-07（请求信封）/ D. 直接进 P2 | A | 待决策 |
 
 ## 最近验证（2026-11-16）
 
@@ -192,6 +190,13 @@
 - `python scripts/check_md_links.py` → 38 篇 md、173 条相对链接、0 缺失
 - CI 新增 Markdown 链接校验（Linux）；README 命令/工具/配置三块由 `go test ./...` 在双平台强制
 - 提交：README 重写、文档契约测试、CI 链接校验、AGENTS §1.14 + D-0008 记录
+
+### 批次 5：崩溃恢复（2026-11-22）
+
+- **真实 DeepSeek API 四种截断位置各 resume 一次，全部 exit 0**：补 `step/end`+`turn/end{interrupted}`、2×`TOOL_NOT_STARTED`、2×`TOOL_OUTCOME_UNKNOWN`、以及"只补未应答的那一个"；修复前同场景是 HTTP 400
+- 全仓库 **142 个用例**（session +7、tool +5、agent +3、server +1、cmd +3）；`gofmt`/`vet`/`staticcheck`/`go test` 全绿
+- 浏览器 E2E 仍通过（`samples=["web","web-","web-stream"]`）
+- 未验证：真实 Ctrl+C（Windows 无法可靠向子进程注入 SIGINT），只测了退出码映射
 
 ## 相关入口
 

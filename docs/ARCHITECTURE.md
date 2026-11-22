@@ -126,6 +126,8 @@ POST /api/chat {sessionId?, input}
 
 新增工具：实现 `tool.Tool`（`Definition` + `Execute`），在某个 `kernel.Plugin.Apply` 里 `registry.Register` 即可。
 
+失败结果带**结构化错误码**（`Result.Code`，写入 `tool/result` 的 `code` 字段）：`TOOL_TIMEOUT`（超时）、`TOOL_NOT_FOUND`（未注册）、`TOOL_BLOCKED`（guard 拒绝）、`TOOL_PANICKED`（panic 恢复）、`ABORTED_BEFORE_DISPATCH`（批次取消没启动）。这样日志与 UI 不必解析自然语言就能区分失败类型。
+
 ### 批次执行（`Pipeline.ExecuteBatch`）
 
 一次模型回复里的多个工具调用按以下规则调度：
@@ -170,7 +172,9 @@ CLI 的 `[tool] write ok 0ms` 就是订阅 `tool/executed` 打印的。
 - 未知事件类型必须带 `ignorable:true`，否则读取端拒绝（前向兼容的安全阀）；
 - `Recording.Project()` 把 surface 事件投影成模型消息（含 `replace` 语义与工具名反查）；
 - 写入器保证原子创建、`seq` 续写、进程内单写者与崩溃尾部修复；
-- 细节与夹具出处见 [T-0008](tasks/T-0008-session-v4-format-layer.md)、[T-0009](tasks/T-0009-session-v4-projection-and-writer.md)、[T-0010](tasks/T-0010-session-v4-wiring.md)。
+- **崩溃恢复**：日志若以打开的 `turn/start` 结束，`Store.Resume` 会在发布会话前补一批普通事件 —— 未应答的 `tool/call` 补 `TOOL_OUTCOME_UNKNOWN`、模型要过但没发起的补 `TOOL_NOT_STARTED`、补 `step/end`、补合成的 `turn/end{interrupted}`。`Store.Load` 保持只读，Web 的会话查看不会改日志；
+- **轮次结束原因**：循环自己只发 `completed` / `error`；用户取消是 `cancelled`，恢复补齐的是 `interrupted`；
+- 细节与夹具出处见 [T-0008](tasks/T-0008-session-v4-format-layer.md)、[T-0009](tasks/T-0009-session-v4-projection-and-writer.md)、[T-0010](tasks/T-0010-session-v4-wiring.md)、[T-0018](tasks/T-0018-crash-recovery.md)。
 
 ## 8. HTTP API
 

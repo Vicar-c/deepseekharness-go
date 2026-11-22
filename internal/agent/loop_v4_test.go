@@ -51,8 +51,8 @@ func TestLoopPersistsV4EventStream(t *testing.T) {
 
 	want := []string{
 		"session/title",
-		"turn/start", "user/message",
-		"step/start", "assistant/message", "tool/call", "tool/result", "step/end",
+		"turn/start", "system/message", "user/message",
+		"step/start", "request/header", "request/context", "assistant/message", "tool/call", "tool/result", "step/end",
 		"step/start", "assistant/message", "step/end",
 		"turn/end",
 	}
@@ -67,28 +67,31 @@ func TestLoopPersistsV4EventStream(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("event sequence:\n got %v\nwant %v", got, want)
 	}
-	if surface != 4 {
-		t.Fatalf("surface events = %d, want 4", surface)
+	if surface != 5 {
+		t.Fatalf("surface events = %d, want 5 (system, user, assistant, tool, assistant)", surface)
 	}
 
 	messages, err := recording.Project()
 	if err != nil {
 		t.Fatalf("Project: %v", err)
 	}
-	if len(messages) != 4 {
-		t.Fatalf("projected messages = %d, want 4", len(messages))
+	if len(messages) != 5 {
+		t.Fatalf("projected messages = %d, want system + user + assistant + tool + assistant", len(messages))
 	}
-	if messages[0].Role != llm.RoleUser || messages[0].Content != "hello" {
-		t.Fatalf("first message = %+v", messages[0])
+	if messages[0].Role != llm.RoleSystem {
+		t.Fatalf("first message = %+v, want the recorded system prompt", messages[0])
 	}
-	if messages[1].Role != llm.RoleAssistant || len(messages[1].ToolCalls) != 1 {
-		t.Fatalf("assistant message = %+v", messages[1])
+	if messages[1].Role != llm.RoleUser || messages[1].Content != "hello" {
+		t.Fatalf("user message = %+v", messages[1])
 	}
-	if messages[2].Role != llm.RoleTool || messages[2].ToolCallID != "call-1" {
-		t.Fatalf("tool message = %+v", messages[2])
+	if messages[2].Role != llm.RoleAssistant || len(messages[2].ToolCalls) != 1 {
+		t.Fatalf("assistant message = %+v", messages[2])
 	}
-	if messages[3].Role != llm.RoleAssistant || messages[3].Content != "done" {
-		t.Fatalf("final message = %+v", messages[3])
+	if messages[3].Role != llm.RoleTool || messages[3].ToolCallID != "call-1" {
+		t.Fatalf("tool message = %+v", messages[3])
+	}
+	if messages[4].Role != llm.RoleAssistant || messages[4].Content != "done" {
+		t.Fatalf("final message = %+v", messages[4])
 	}
 
 	var call session.ToolCallData

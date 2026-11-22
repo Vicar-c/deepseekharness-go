@@ -3,6 +3,7 @@ package session
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -73,6 +74,52 @@ type ToolCallData struct {
 // TurnMarker is the turn/start payload.
 type TurnMarker struct {
 	Turn int `json:"turn"`
+}
+
+// Request header reasons, mirroring the upstream vocabulary: the log's first
+// header, a loop's first header over existing history, a changed envelope and a
+// new message series.
+const (
+	RequestHeaderInitial = "initial"
+	RequestHeaderResume  = "resume"
+	RequestHeaderChange  = "change"
+	RequestHeaderSeries  = "series"
+)
+
+// CallConfigData is the call configuration recorded in a request header.
+type CallConfigData struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+}
+
+// ToolSchemaData is one tool declaration recorded in a request header.
+type ToolSchemaData struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Parameters  json.RawMessage `json:"parameters"`
+}
+
+// EpochHeaderData is the self-contained request envelope: the call config plus
+// the exact tool schemas, so a reader can rebuild the request without replaying
+// adapter configuration.
+type EpochHeaderData struct {
+	Config CallConfigData   `json:"config"`
+	Tools  []ToolSchemaData `json:"tools,omitempty"`
+}
+
+// RequestHeaderData is the request/header payload.
+type RequestHeaderData struct {
+	Header       EpochHeaderData `json:"header"`
+	Reason       string          `json:"reason"`
+	StartsSeries bool            `json:"startsSeries,omitempty"`
+}
+
+// RequestContextData is the request/context payload: the route metadata that is
+// not part of the call config.
+type RequestContextData struct {
+	Provider      string `json:"provider"`
+	Model         string `json:"model"`
+	ContextWindow int    `json:"contextWindow,omitempty"`
 }
 
 // StepMarker is the step/start and step/end payload.

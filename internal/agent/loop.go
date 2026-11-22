@@ -4,6 +4,7 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/Vicar-c/deepseekharness-go/internal/kernel"
 	"github.com/Vicar-c/deepseekharness-go/internal/llm"
+	"github.com/Vicar-c/deepseekharness-go/internal/prompt"
 	"github.com/Vicar-c/deepseekharness-go/internal/session"
 	"github.com/Vicar-c/deepseekharness-go/internal/tool"
 )
@@ -26,10 +28,7 @@ const (
 )
 
 // DefaultSystemPrompt is used when Options.SystemPrompt is empty.
-const DefaultSystemPrompt = `You are DeepSeek Harness (dsh), a Go-rewritten agent harness.
-Work inside the configured workspace. Prefer tools over guessing: read files before editing,
-run commands to verify your work, and keep answers concise. Tool results arrive as user-visible
-tool messages; when you are done, reply with the final answer only.`
+const DefaultSystemPrompt = prompt.Base
 
 // Options configures an agent Loop.
 type Options struct {
@@ -42,6 +41,10 @@ type Options struct {
 	SystemPrompt  string
 	MaxIterations int
 	Model         string
+	// Provider names the model route recorded in request/context.
+	Provider string
+	// ContextWindow is the route's advertised context size, when known.
+	ContextWindow int
 	// MaxParallelToolCalls bounds the overlap of concurrency-safe tool calls in
 	// one model step. Zero uses the tool pipeline default (10); 1 forces serial.
 	MaxParallelToolCalls int
@@ -77,6 +80,11 @@ type FinishedEvent struct {
 type Loop struct {
 	opts        Options
 	definitions []llm.ToolDefinition
+	// headerFingerprint is the last written request envelope; unchanged steps
+	// inherit it instead of duplicating the tool schemas into the log.
+	headerFingerprint string
+	headerWritten     bool
+	contextRecorded   bool
 }
 
 // New validates dependencies and builds a loop.
@@ -130,6 +138,16 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 	if err := l.record("turn/start", session.TurnMarker{Turn: turn}); err != nil {
 		return "", err
 	}
+	// The rendered system prompt is recorded once per session, before the first
+	// user message, so a resumed conversation replays the same request prefix.
+	if !l.hasSystemMessage() {
+		prompt := l.opts.SystemPrompt
+		if err := l.appendSurface("system/message",
+			session.SystemMessageData{Turn: turn, Step: 1, Message: session.NewSystemMessage(prompt)},
+			llm.TextMessage(llm.RoleSystem, prompt)); err != nil {
+			return "", err
+		}
+	}
 	if err := l.appendSurface("user/message", session.NewUserMessage(input), llm.TextMessage(llm.RoleUser, input)); err != nil {
 		return "", err
 	}
@@ -146,6 +164,9 @@ func (l *Loop) Run(ctx context.Context, input string) (string, error) {
 			Model:    l.opts.Model,
 			Messages: l.messages(),
 			Tools:    l.definitions,
+		}
+		if err := l.recordEnvelope(turn, iteration, request); err != nil {
+			return "", err
 		}
 		response, err := l.chat(ctx, request)
 		if err != nil {
@@ -305,10 +326,76 @@ func turnEndReason(cancelled bool) string {
 }
 
 func (l *Loop) messages() []llm.Message {
+	if len(l.opts.Session.Messages) > 0 && l.opts.Session.Messages[0].Role == llm.RoleSystem {
+		return append([]llm.Message(nil), l.opts.Session.Messages...)
+	}
 	messages := make([]llm.Message, 0, len(l.opts.Session.Messages)+1)
 	messages = append(messages, llm.TextMessage(llm.RoleSystem, l.opts.SystemPrompt))
 	messages = append(messages, l.opts.Session.Messages...)
 	return messages
+}
+
+// hasSystemMessage reports whether the recorded history already carries the
+// system prompt, which is what keeps a resumed session from appending it twice.
+func (l *Loop) hasSystemMessage() bool {
+	return len(l.opts.Session.Messages) > 0 && l.opts.Session.Messages[0].Role == llm.RoleSystem
+}
+
+func (l *Loop) provider() string {
+	if strings.TrimSpace(l.opts.Provider) != "" {
+		return l.opts.Provider
+	}
+	return "deepseek"
+}
+
+// recordEnvelope writes request/header when the request envelope changes, and
+// request/context once per loop. The header is self-contained (call config plus
+// exact tool schemas), so the log can rebuild the request without replaying
+// adapter configuration; unchanged steps inherit the latest header.
+func (l *Loop) recordEnvelope(turn, step int, request llm.Request) error {
+	header := session.EpochHeaderData{
+		Config: session.CallConfigData{Provider: l.provider(), Model: request.Model},
+	}
+	for _, definition := range request.Tools {
+		header.Tools = append(header.Tools, session.ToolSchemaData{
+			Name:        definition.Function.Name,
+			Description: definition.Function.Description,
+			Parameters:  definition.Function.Parameters,
+		})
+	}
+	encoded, err := json.Marshal(header)
+	if err != nil {
+		return fmt.Errorf("agent: encode request header: %w", err)
+	}
+	fingerprint := fmt.Sprintf("%x", sha256.Sum256(encoded))
+	if fingerprint == l.headerFingerprint {
+		return nil
+	}
+	reason := session.RequestHeaderChange
+	if !l.headerWritten {
+		reason = session.RequestHeaderResume
+		if turn == 1 {
+			reason = session.RequestHeaderInitial
+		}
+	}
+	if err := l.record("request/header", session.RequestHeaderData{Header: header, Reason: reason}); err != nil {
+		return err
+	}
+	l.headerWritten = true
+	l.headerFingerprint = fingerprint
+
+	if !l.contextRecorded {
+		context := session.RequestContextData{
+			Provider:      header.Config.Provider,
+			Model:         header.Config.Model,
+			ContextWindow: l.opts.ContextWindow,
+		}
+		if err := l.record("request/context", context); err != nil {
+			return err
+		}
+		l.contextRecorded = true
+	}
+	return nil
 }
 
 func (l *Loop) emit(name string, payload any) {

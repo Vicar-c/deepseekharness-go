@@ -21,6 +21,7 @@ import (
 	"github.com/Vicar-c/deepseekharness-go/internal/kernel"
 	"github.com/Vicar-c/deepseekharness-go/internal/llm"
 	"github.com/Vicar-c/deepseekharness-go/internal/profiles"
+	"github.com/Vicar-c/deepseekharness-go/internal/prompt"
 	"github.com/Vicar-c/deepseekharness-go/internal/server"
 	"github.com/Vicar-c/deepseekharness-go/internal/session"
 	"github.com/Vicar-c/deepseekharness-go/internal/tool"
@@ -269,10 +270,11 @@ func (r *runtime) newLoop(sess *session.Session) (*agent.Loop, error) {
 	for _, definition := range r.registry.Definitions() {
 		toolNames = append(toolNames, definition.Name)
 	}
-	systemPrompt := agent.DefaultSystemPrompt + fmt.Sprintf(
-		"\n\nRuntime context:\n- model: %s\n- workspace: %s\n- tools: %s",
-		r.cfg.Model, r.cfg.Workspace, strings.Join(toolNames, ", "),
-	)
+	systemPrompt := prompt.Harness(prompt.Runtime{
+		Model:     r.cfg.Model,
+		Workspace: r.cfg.Workspace,
+		Tools:     toolNames,
+	}).Render()
 	return agent.New(agent.Options{
 		Client:               client,
 		Pipeline:             r.pipeline,

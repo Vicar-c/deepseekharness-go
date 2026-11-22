@@ -61,10 +61,13 @@ func TestLoopStreamsDeltasAndPersistsOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(loaded.Messages) != 2 {
-		t.Fatalf("persisted messages = %d, want user + assistant only", len(loaded.Messages))
+	if len(loaded.Messages) != 3 {
+		t.Fatalf("persisted messages = %d, want system + user + assistant", len(loaded.Messages))
 	}
-	if loaded.Messages[1].Role != llm.RoleAssistant || loaded.Messages[1].Content != "Hello world" {
-		t.Fatalf("persisted assistant = %+v", loaded.Messages[1])
+	if loaded.Messages[0].Role != llm.RoleSystem {
+		t.Fatalf("first persisted message = %+v, want the system prompt", loaded.Messages[0])
+	}
+	if loaded.Messages[2].Role != llm.RoleAssistant || loaded.Messages[2].Content != "Hello world" {
+		t.Fatalf("persisted assistant = %+v", loaded.Messages[2])
 	}
 }

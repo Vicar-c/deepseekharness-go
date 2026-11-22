@@ -136,8 +136,13 @@ func TestLoopExecutesToolsThenAnswers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load persisted session: %v", err)
 	}
-	if len(loaded.Messages) != 4 {
-		t.Fatalf("persisted messages = %d, want 4", len(loaded.Messages))
+	// The recorded history starts with the system prompt: it is a surface event
+	// now, not something only the loop remembers.
+	if len(loaded.Messages) != 5 {
+		t.Fatalf("persisted messages = %d, want system + user + assistant + tool + assistant", len(loaded.Messages))
+	}
+	if loaded.Messages[0].Role != llm.RoleSystem {
+		t.Fatalf("first persisted message = %+v, want the system prompt", loaded.Messages[0])
 	}
 }
 

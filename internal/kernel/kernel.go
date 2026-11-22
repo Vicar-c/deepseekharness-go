@@ -192,16 +192,26 @@ type subscription struct {
 // Events is a synchronous, ordered pub/sub bus. Handlers run in subscription
 // order on the emitting goroutine; a panicking handler is recovered so one bad
 // subscriber cannot bring down the harness.
+//
+// Besides the fire-and-forget Emit listeners, the bus keeps the listeners of the
+// value-returning dispatch modes (Serial, Bail, Parallel and Waterfall), which
+// live in dispatch.go.
 type Events struct {
-	mu       sync.RWMutex
-	handlers map[string][]subscription
-	nextID   uint64
-	closed   bool
+	mu         sync.RWMutex
+	handlers   map[string][]subscription
+	nextID     uint64
+	hooks      map[string][]hookSubscription
+	waterfalls map[string][]waterfallSubscription
+	closed     bool
 }
 
 // NewEvents creates an open event bus.
 func NewEvents() *Events {
-	return &Events{handlers: make(map[string][]subscription)}
+	return &Events{
+		handlers:   make(map[string][]subscription),
+		hooks:      make(map[string][]hookSubscription),
+		waterfalls: make(map[string][]waterfallSubscription),
+	}
 }
 
 // On subscribes to one event name and returns an idempotent unsubscribe func.
@@ -255,12 +265,15 @@ func (e *Events) Emit(name string, payload any) {
 	}
 }
 
-// Close stops delivering events and drops every subscription.
+// Close stops delivering events and drops every subscription, including the
+// listeners of the value-returning dispatch modes.
 func (e *Events) Close() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.closed = true
 	e.handlers = make(map[string][]subscription)
+	e.hooks = make(map[string][]hookSubscription)
+	e.waterfalls = make(map[string][]waterfallSubscription)
 }
 
 // Services is a typed service locator: plugins provide values by their static

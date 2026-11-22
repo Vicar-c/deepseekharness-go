@@ -239,24 +239,49 @@ func RepairTail(path string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("session: read %s: %w", path, err)
 	}
-	if len(data) == 0 {
+	keep := committedPrefix(data)
+	if keep == len(data) {
 		return 0, nil
 	}
-	if data[len(data)-1] == '\n' {
-		start := bytes.LastIndexByte(data[:len(data)-1], '\n') + 1
-		last := bytes.TrimSpace(data[start:])
-		if start == 0 {
-			// A one-line file may carry a BOM; it is part of the header, not a
-			// reason to truncate the only record in the log.
-			last = bytes.TrimSpace(bytes.TrimPrefix(last, utf8BOM))
-		}
-		if len(last) == 0 || json.Valid(last) {
-			return 0, nil
-		}
-		return int64(len(data) - start), truncateFile(path, int64(start))
+	return int64(len(data) - keep), truncateFile(path, int64(keep))
+}
+
+// committedPrefix reports how many leading bytes form the complete, parseable
+// prefix of a log. A trailing record that a crash left incomplete, or a complete
+// record that does not parse, is excluded from the prefix.
+func committedPrefix(data []byte) int {
+	if len(data) == 0 {
+		return 0
 	}
-	cut := bytes.LastIndexByte(data, '\n') + 1
-	return int64(len(data) - cut), truncateFile(path, int64(cut))
+	if data[len(data)-1] != '\n' {
+		return bytes.LastIndexByte(data, '\n') + 1
+	}
+	start := bytes.LastIndexByte(data[:len(data)-1], '\n') + 1
+	last := bytes.TrimSpace(data[start:])
+	if start == 0 {
+		// A one-line file may carry a BOM; it is part of the header, not a
+		// reason to truncate the only record in the log.
+		last = bytes.TrimSpace(bytes.TrimPrefix(last, utf8BOM))
+	}
+	if len(last) == 0 || json.Valid(last) {
+		return len(data)
+	}
+	return start
+}
+
+// readRecordingLenient decodes the committed prefix of path without touching the
+// file. Readers must not repair: a concurrent writer may be halfway through an
+// append, and truncating what looks like a torn tail would delete a line it owns.
+func readRecordingLenient(path string) (*Recording, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("session: open %s: %w", path, err)
+	}
+	recording, err := Decode(bytes.NewReader(data[:committedPrefix(data)]))
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return recording, nil
 }
 
 func truncateFile(path string, size int64) error {

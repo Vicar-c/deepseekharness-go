@@ -239,6 +239,17 @@ func (s *Store) Resume(id string) (*Session, error) {
 	s.repairMu.Lock()
 	defer s.repairMu.Unlock()
 
+	// Resuming owns the write path, so it repairs the physical tail on disk
+	// before computing any closers. Load itself never writes.
+	if _, err := os.Stat(s.path(id)); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("session: %s not found", id)
+		}
+		return nil, fmt.Errorf("session: open %s: %w", s.path(id), err)
+	}
+	if _, err := RepairTail(s.path(id)); err != nil {
+		return nil, err
+	}
 	sess, err := s.Load(id)
 	if err != nil {
 		return nil, err
@@ -279,10 +290,7 @@ func (s *Store) Load(id string) (*Session, error) {
 		}
 		return nil, fmt.Errorf("session: open %s: %w", path, err)
 	}
-	if _, err := RepairTail(path); err != nil {
-		return nil, err
-	}
-	recording, err := ReadRecording(path)
+	recording, err := readRecordingLenient(path)
 	if err != nil {
 		return nil, err
 	}

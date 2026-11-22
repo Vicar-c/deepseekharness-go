@@ -49,6 +49,9 @@ type ToolResultData struct {
 	Turn    int            `json:"turn"`
 	Step    int            `json:"step"`
 	Message SurfaceMessage `json:"message"`
+	// Code is a stable machine-readable error code, present only when the
+	// result is an error (MIGRATION_MAP §6-8).
+	Code string `json:"code,omitempty"`
 }
 
 // SystemMessageData is the system/message and developer/message payload.

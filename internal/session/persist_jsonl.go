@@ -245,6 +245,11 @@ func RepairTail(path string) (int64, error) {
 	if data[len(data)-1] == '\n' {
 		start := bytes.LastIndexByte(data[:len(data)-1], '\n') + 1
 		last := bytes.TrimSpace(data[start:])
+		if start == 0 {
+			// A one-line file may carry a BOM; it is part of the header, not a
+			// reason to truncate the only record in the log.
+			last = bytes.TrimSpace(bytes.TrimPrefix(last, utf8BOM))
+		}
 		if len(last) == 0 || json.Valid(last) {
 			return 0, nil
 		}

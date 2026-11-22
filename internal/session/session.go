@@ -49,17 +49,25 @@ func (s *Session) Summary() Summary {
 
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
+// ErrSessionOwned reports a second concurrent turn on a session that already has
+// one running.
+var ErrSessionOwned = errors.New("session: another turn is already running on this session")
+
 // Store persists sessions as v4 JSONL files under one directory.
 type Store struct {
 	dir       string
 	workspace string
 	mu        sync.Mutex
 	writers   map[string]*Writer
+	turns     map[string]struct{}
+	// repairMu serializes whole-session repairs: two callers resuming the same
+	// crashed log must not both append the same closers.
+	repairMu sync.Mutex
 }
 
 // NewStore creates a store rooted at dir. The directory is created lazily.
 func NewStore(dir string) *Store {
-	return &Store{dir: dir, writers: make(map[string]*Writer)}
+	return &Store{dir: dir, writers: make(map[string]*Writer), turns: make(map[string]struct{})}
 }
 
 // Dir reports the session directory.
@@ -196,6 +204,68 @@ func (s *Store) Append(sess *Session, message llm.Message) error {
 	return nil
 }
 
+// BeginTurn reserves the session for one running turn and returns an idempotent
+// release function. A second concurrent turn on the same session is rejected
+// instead of interleaving its turn/start and step events with the first one.
+func (s *Store) BeginTurn(id string) (func(), error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.turns == nil {
+		s.turns = make(map[string]struct{})
+	}
+	if _, running := s.turns[id]; running {
+		return nil, fmt.Errorf("%w: %s", ErrSessionOwned, id)
+	}
+	s.turns[id] = struct{}{}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			delete(s.turns, id)
+		})
+	}, nil
+}
+
+// Resume opens an existing session for writing and closes a turn that a crash
+// left open, appending the recovery events (missing tool results, step/end and
+// turn/end{interrupted}) as an ordinary batch. The returned messages already
+// include them, so the next request sees a paired tool history.
+//
+// Load stays read-only: a viewer must never mutate a log.
+func (s *Store) Resume(id string) (*Session, error) {
+	// The whole read-repair-append sequence is serialized: a second concurrent
+	// resume must observe the repaired log, not append a second copy.
+	s.repairMu.Lock()
+	defer s.repairMu.Unlock()
+
+	sess, err := s.Load(id)
+	if err != nil {
+		return nil, err
+	}
+	recording, err := ReadRecording(s.path(id))
+	if err != nil {
+		return nil, err
+	}
+	closers := InterruptedTurnClosers(recording)
+	if len(closers) == 0 {
+		return sess, nil
+	}
+	writer, err := s.writerFor(id)
+	if err != nil {
+		return nil, err
+	}
+	for _, closer := range closers {
+		if _, err := writer.AppendEvent(closer.Type, closer.Data, closer.SurfaceOp, nil); err != nil {
+			return nil, fmt.Errorf("session: repair %s: %w", id, err)
+		}
+	}
+	if err := writer.Sync(); err != nil {
+		return nil, fmt.Errorf("session: flush repair %s: %w", id, err)
+	}
+	return s.Load(id)
+}
+
 // Load reads one session file and projects it back into model messages. A crash
 // torn trailing record is repaired before reading.
 func (s *Store) Load(id string) (*Session, error) {
@@ -215,6 +285,12 @@ func (s *Store) Load(id string) (*Session, error) {
 	recording, err := ReadRecording(path)
 	if err != nil {
 		return nil, err
+	}
+	// The file name is the identity callers use; a mismatch means a renamed or
+	// copied file, and silently trusting the header would make every later write
+	// target a path the caller never asked for.
+	if recording.Header.ID != id {
+		return nil, fmt.Errorf("session: %s declares id %q, want %q", path, recording.Header.ID, id)
 	}
 	messages, err := recording.Project()
 	if err != nil {

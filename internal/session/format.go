@@ -21,6 +21,11 @@ const HeaderType = "session"
 // protects against a corrupt or hostile file.
 const maxLineBytes = 8 << 20
 
+// utf8BOM is the byte order mark some Windows editors prepend. Decode strips it
+// from the header line and RepairTail ignores it when validating the last
+// record, so a hand-edited log neither fails to read nor gets truncated.
+var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
+
 // Errors returned by Decode. They are wrapped with the failing line number, so
 // callers can use errors.Is while still printing a precise message.
 var (
@@ -135,7 +140,14 @@ func Decode(r io.Reader) (*Recording, error) {
 	nextSeq := int64(0)
 	for scanner.Scan() {
 		lineNumber++
-		line := bytes.TrimSpace(scanner.Bytes())
+		line := scanner.Bytes()
+		if lineNumber == 1 {
+			// A hand-edited or Windows-saved file may start with a UTF-8 BOM;
+			// encoding/json rejects it, and the header is the only place it can
+			// appear.
+			line = bytes.TrimPrefix(line, utf8BOM)
+		}
+		line = bytes.TrimSpace(line)
 		if len(line) == 0 {
 			continue
 		}
